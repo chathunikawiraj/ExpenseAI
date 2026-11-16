@@ -90,7 +90,7 @@ model Category {
   name       String
   isDefault  Boolean   @default(false)
   userId     String?
-  color      String?   @default("#6C5CE7")
+  color      String?   @default("#9275F5")
   icon       String?   @default("tag")
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
@@ -168,6 +168,7 @@ model Budget {
   category   Category? @relation(fields: [categoryId], references: [id], onDelete: Cascade)
 
   @@unique([userId, month, categoryId])
+  // The initial migration adds a partial unique index for rows with no category.
   @@index([userId, month])
 }
 
@@ -178,7 +179,7 @@ model SavingsGoal {
   targetAmount Decimal   @db.Decimal(12, 2)
   savedAmount  Decimal   @default(0.00) @db.Decimal(12, 2)
   targetDate   DateTime
-  color        String?   @default("#6C5CE7")
+  color        String?   @default("#9275F5")
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 

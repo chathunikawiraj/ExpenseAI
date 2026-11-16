@@ -18,6 +18,18 @@ import {
 import { TrendingUp, PieChart, BarChart3, ArrowUpRight, ArrowDownLeft } from 'lucide-react';
 import { mockCategories } from '../data/mockData';
 
+const tooltipContentStyle = {
+  backgroundColor: '#22263A',
+  borderRadius: '16px',
+  border: '1px solid #363B55',
+  color: '#F4F2FF',
+  boxShadow: '0 12px 30px rgba(0, 0, 0, 0.35)',
+  fontSize: '12px',
+};
+
+const tooltipLabelStyle = { color: '#F4F2FF', fontWeight: 700 };
+const tooltipItemStyle = { color: '#F4F2FF' };
+
 export const AnalyticsPage: React.FC = () => {
   // Category breakdown for Pie/Donut
   const categoryData = [
@@ -60,7 +72,7 @@ export const AnalyticsPage: React.FC = () => {
 
       {/* Top 3 Metric Stat Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-card-blue rounded-4xl p-6 shadow-comet flex items-center justify-between">
+        <div className="card-hover bg-card-blue rounded-4xl p-6 shadow-comet flex items-center justify-between">
           <div>
             <span className="text-xs font-semibold text-navy/70">Total Net Savings</span>
             <h3 className="text-2xl font-extrabold text-navy mt-1">+$3,948.20</h3>
@@ -74,7 +86,7 @@ export const AnalyticsPage: React.FC = () => {
           </div>
         </div>
 
-        <div className="bg-card-lavender rounded-4xl p-6 shadow-comet flex items-center justify-between">
+        <div className="card-hover bg-card-lavender rounded-4xl p-6 shadow-comet flex items-center justify-between">
           <div>
             <span className="text-xs font-semibold text-navy/70">Largest Category</span>
             <h3 className="text-2xl font-extrabold text-navy mt-1">Tech (80.5%)</h3>
@@ -87,7 +99,7 @@ export const AnalyticsPage: React.FC = () => {
           </div>
         </div>
 
-        <div className="bg-white rounded-4xl p-6 shadow-comet flex items-center justify-between">
+        <div className="card-hover bg-white rounded-4xl p-6 shadow-comet flex items-center justify-between">
           <div>
             <span className="text-xs font-semibold text-navy/70">Avg. Daily Spend</span>
             <h3 className="text-2xl font-extrabold text-navy mt-1">$269.61</h3>
@@ -105,7 +117,7 @@ export const AnalyticsPage: React.FC = () => {
       {/* Charts Grid: Month-over-Month Bar (Left) and Donut Category (Right) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
         {/* MoM Comparison Bar Chart */}
-        <div className="lg:col-span-7 bg-white rounded-4xl p-7 shadow-comet flex flex-col justify-between">
+        <div className="card-hover lg:col-span-7 bg-white rounded-4xl p-7 shadow-comet flex flex-col justify-between">
           <div>
             <h3 className="text-lg font-bold text-navy">Month-over-Month Cashflow</h3>
             <p className="text-xs text-navy-muted mt-0.5">Comparing Income vs Expense trends</p>
@@ -118,13 +130,9 @@ export const AnalyticsPage: React.FC = () => {
                 <XAxis dataKey="month" tick={{ fontSize: 12, fill: '#A5A5BE' }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 12, fill: '#A5A5BE' }} axisLine={false} tickLine={false} />
                 <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#22263A',
-                    borderRadius: '16px',
-                    border: 'none',
-                    color: '#fff',
-                    fontSize: '12px',
-                  }}
+                  contentStyle={tooltipContentStyle}
+                  labelStyle={tooltipLabelStyle}
+                  itemStyle={tooltipItemStyle}
                 />
                 <Legend iconType="circle" wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
                 <Bar dataKey="income" name="Income ($)" fill="#4BC9A2" radius={[8, 8, 0, 0]} />
@@ -135,7 +143,7 @@ export const AnalyticsPage: React.FC = () => {
         </div>
 
         {/* Category Allocation Donut Chart */}
-        <div className="lg:col-span-5 bg-white rounded-4xl p-7 shadow-comet flex flex-col justify-between">
+        <div className="card-hover lg:col-span-5 bg-white rounded-4xl p-7 shadow-comet flex flex-col justify-between">
           <div>
             <h3 className="text-lg font-bold text-navy">Spending by Category</h3>
             <p className="text-xs text-navy-muted mt-0.5">Categorical distribution for September</p>
@@ -158,13 +166,9 @@ export const AnalyticsPage: React.FC = () => {
                   ))}
                 </Pie>
                 <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#22263A',
-                    borderRadius: '16px',
-                    border: 'none',
-                    color: '#fff',
-                    fontSize: '12px',
-                  }}
+                  contentStyle={tooltipContentStyle}
+                  labelStyle={tooltipLabelStyle}
+                  itemStyle={tooltipItemStyle}
                 />
               </RechartsPie>
             </ResponsiveContainer>
@@ -182,7 +186,7 @@ export const AnalyticsPage: React.FC = () => {
       </div>
 
       {/* 30-Day Line Trend Chart */}
-      <div className="bg-white rounded-4xl p-7 shadow-comet flex flex-col justify-between">
+      <div className="card-hover bg-white rounded-4xl p-7 shadow-comet flex flex-col justify-between">
         <div>
           <h3 className="text-lg font-bold text-navy">Daily Expense Trajectory</h3>
           <p className="text-xs text-navy-muted mt-0.5">Daily outlays across the current billing period</p>
@@ -195,13 +199,9 @@ export const AnalyticsPage: React.FC = () => {
               <XAxis dataKey="day" tick={{ fontSize: 12, fill: '#A5A5BE' }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fontSize: 12, fill: '#A5A5BE' }} axisLine={false} tickLine={false} />
               <Tooltip
-                contentStyle={{
-                  backgroundColor: '#22263A',
-                  borderRadius: '16px',
-                  border: 'none',
-                  color: '#fff',
-                  fontSize: '12px',
-                }}
+                contentStyle={tooltipContentStyle}
+                labelStyle={tooltipLabelStyle}
+                itemStyle={tooltipItemStyle}
               />
               <Line
                 type="monotone"

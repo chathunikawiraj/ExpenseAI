@@ -10,7 +10,7 @@ export const WelcomeCard: React.FC<WelcomeCardProps> = ({ name }) => {
   const navigate = useNavigate();
 
   return (
-    <div className="bg-card-blue rounded-4xl p-8 flex flex-col items-center text-center relative overflow-hidden shadow-comet">
+    <div className="card-hover bg-card-blue rounded-4xl p-8 flex flex-col items-center text-center relative overflow-hidden shadow-comet">
       {/* Decorative subtle background bubbles */}
       <div className="absolute top-4 left-4 w-6 h-6 rounded-full bg-white/40 flex items-center justify-center">
         <Sparkles className="w-3.5 h-3.5 text-primary/70" />
