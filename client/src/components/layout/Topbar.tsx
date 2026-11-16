@@ -1,5 +1,9 @@
-import React, { useState } from 'react';
-import { Search, Bell, X, CheckCircle2, AlertTriangle } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Search, Bell, X, CheckCircle2, AlertTriangle, LogOut, Settings, Info } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
+import { useNotifications } from '../../context/NotificationContext';
+import { useToast } from '../common/Toast';
 
 interface TopbarProps {
   onSearch?: (term: string) => void;
@@ -18,31 +22,49 @@ export const Topbar: React.FC<TopbarProps> = ({
     avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
   },
 }) => {
+  const navigate = useNavigate();
+  const { logout } = useAuth();
+  const { notifications, unreadCount, markAllAsRead, markAsRead } = useNotifications();
+  const { showToast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
   const [showNotifications, setShowNotifications] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(2);
-
-  const notifications = [
-    {
-      id: 1,
-      title: 'Budget Alert',
-      message: 'You have reached 82% of your monthly Food budget.',
-      time: '10m ago',
-      type: 'warning',
-    },
-    {
-      id: 2,
-      title: 'Receipt Processed',
-      message: 'MacBook receipt scanned: $1,280.50 categorized under Tech.',
-      time: '1h ago',
-      type: 'success',
-    },
-  ];
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const profileMenuRef = useRef<HTMLDivElement>(null);
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setSearchTerm(val);
     onSearch?.(val);
+  };
+
+  useEffect(() => {
+    if (!showProfileMenu) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && !profileMenuRef.current?.contains(event.target)) {
+        setShowProfileMenu(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowProfileMenu(false);
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [showProfileMenu]);
+
+  const handleSignOut = async () => {
+    setShowProfileMenu(false);
+    try {
+      await logout();
+      navigate('/login', { replace: true });
+    } catch {
+      showToast('Unable to sign out right now. Please try again.', 'error');
+    }
   };
 
   return (
@@ -96,7 +118,7 @@ export const Topbar: React.FC<TopbarProps> = ({
                 <span className="font-bold text-navy text-sm">Notifications</span>
                 {unreadCount > 0 && (
                   <button
-                    onClick={() => setUnreadCount(0)}
+                    onClick={markAllAsRead}
                     className="text-xs text-primary hover:underline font-medium"
                   >
                     Mark all read
@@ -105,45 +127,126 @@ export const Topbar: React.FC<TopbarProps> = ({
               </div>
               <div className="divide-y divide-gray-50 mt-2 max-h-64 overflow-y-auto">
                 {notifications.map((n) => (
-                  <div key={n.id} className="py-2.5 flex items-start gap-3 hover:bg-navy-light/50 rounded-2xl p-2 transition-colors">
-                    {n.type === 'warning' ? (
+                  <div
+                    key={n.id}
+                    className={`py-2.5 flex items-start gap-3 hover:bg-navy-light/50 rounded-2xl p-2 transition-colors ${
+                      n.isRead ? 'opacity-70' : ''
+                    }`}
+                  >
+                    {n.type === 'BUDGET_80' ? (
                       <div className="w-8 h-8 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center flex-shrink-0 mt-0.5">
                         <AlertTriangle className="w-4 h-4" />
                       </div>
-                    ) : (
+                    ) : n.type === 'OCR_PROCESSED' ? (
                       <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center flex-shrink-0 mt-0.5">
                         <CheckCircle2 className="w-4 h-4" />
                       </div>
+                    ) : (
+                      <div className="w-8 h-8 rounded-full bg-primary-light text-primary flex items-center justify-center flex-shrink-0 mt-0.5">
+                        <Info className="w-4 h-4" />
+                      </div>
                     )}
                     <div className="flex-1">
-                      <p className="text-xs font-semibold text-navy">{n.title}</p>
+                      <p className="text-xs font-semibold text-navy">
+                        {n.type === 'BUDGET_80'
+                          ? 'Budget Alert'
+                          : n.type === 'OCR_PROCESSED'
+                            ? 'Receipt Processed'
+                            : 'Account Update'}
+                      </p>
                       <p className="text-xs text-navy-muted line-clamp-2 mt-0.5">{n.message}</p>
-                      <span className="text-[10px] text-navy-muted/70 mt-1 block">{n.time}</span>
+                      <time className="text-[10px] text-navy-muted/70 mt-1 block" dateTime={n.createdAt}>
+                        {new Date(n.createdAt).toLocaleString(undefined, {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: 'numeric',
+                          minute: '2-digit',
+                        })}
+                      </time>
                     </div>
+                    {!n.isRead && (
+                      <button
+                        type="button"
+                        onClick={() => markAsRead(n.id)}
+                        aria-label="Mark notification as read"
+                        className="rounded-full p-1 text-navy-muted hover:bg-emerald-50 hover:text-emerald-600"
+                      >
+                        <CheckCircle2 className="h-4 w-4" />
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowNotifications(false);
+                  navigate('/notifications');
+                }}
+                className="mt-3 w-full rounded-full bg-primary-light px-4 py-2.5 text-xs font-bold text-primary transition-colors hover:bg-primary hover:text-white"
+              >
+                See all notifications
+              </button>
             </div>
           )}
         </div>
 
         {/* User Profile Chip */}
-        <div className="flex items-center gap-3 pl-2 pr-1 py-1 rounded-full bg-white/80 backdrop-blur-sm shadow-comet cursor-pointer hover:bg-white transition-all">
-          <div className="w-9 h-9 rounded-full overflow-hidden bg-purple-100 border border-purple-200 flex-shrink-0">
-            {user.avatarUrl ? (
-              <img src={user.avatarUrl} alt={user.name} className="w-full h-full object-cover" />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center font-bold text-primary text-xs">
-                {user.name.charAt(0)}
-              </div>
-            )}
-          </div>
-          <div className="pr-3 hidden sm:flex flex-col text-left">
-            <span className="text-xs font-bold text-navy leading-tight">{user.name}</span>
-            <span className="text-[10px] font-semibold text-navy-muted uppercase tracking-wider leading-tight">
-              {user.role}
-            </span>
-          </div>
+        <div className="relative" ref={profileMenuRef}>
+          <button
+            type="button"
+            onClick={() => setShowProfileMenu((open) => !open)}
+            aria-label="Open user profile menu"
+            aria-haspopup="menu"
+            aria-expanded={showProfileMenu}
+            className="flex items-center gap-3 pl-2 pr-1 py-1 rounded-full bg-white/80 backdrop-blur-sm shadow-comet hover:bg-white transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          >
+            <div className="w-9 h-9 rounded-full overflow-hidden bg-purple-100 border border-purple-200 flex-shrink-0">
+              {user.avatarUrl ? (
+                <img src={user.avatarUrl} alt="" className="w-full h-full object-cover" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center font-bold text-primary text-xs">
+                  {user.name.charAt(0)}
+                </div>
+              )}
+            </div>
+            <div className="pr-3 hidden sm:flex flex-col text-left">
+              <span className="text-xs font-bold text-navy leading-tight">{user.name}</span>
+              <span className="text-[10px] font-semibold text-navy-muted uppercase tracking-wider leading-tight">
+                {user.role}
+              </span>
+            </div>
+          </button>
+
+          {showProfileMenu && (
+            <div
+              role="menu"
+              aria-label="User profile options"
+              className="absolute right-0 mt-3 w-52 rounded-2xl border border-purple-100 bg-white p-2 shadow-comet-lg z-50"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setShowProfileMenu(false);
+                  navigate('/settings');
+                }}
+                className="w-full flex items-center gap-2 rounded-xl px-3 py-2.5 text-left text-xs font-semibold text-navy hover:bg-primary-light hover:text-primary transition-colors"
+              >
+                <Settings className="w-4 h-4" />
+                Profile & settings
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={handleSignOut}
+                className="w-full flex items-center gap-2 rounded-xl px-3 py-2.5 text-left text-xs font-semibold text-rose-500 hover:bg-rose-50 transition-colors"
+              >
+                <LogOut className="w-4 h-4" />
+                Sign out
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </header>

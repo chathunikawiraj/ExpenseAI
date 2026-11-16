@@ -102,13 +102,15 @@ cd ../server && npm install
 ### 3. Database Initialization (PostgreSQL)
 To run local PostgreSQL using Docker Compose:
 ```bash
-docker compose up -d
+docker compose up -d postgres
 ```
-Generate the Prisma client:
+Copy `.env.example` to `server/.env`, then set `DATABASE_URL` to the local PostgreSQL URL configured in `docker-compose.yml` and provide local JWT secrets. Generate the Prisma client, create/apply the initial migration, and seed default categories:
 ```bash
 npm --workspace=server run prisma:generate
+npm --workspace=server run prisma:migrate -- --name init
+npm --workspace=server run prisma:seed
 ```
-*(Note: ExpenseAI includes an intelligent data repository fallback that initializes all seed demo accounts, categories, and 3 months of transactions automatically if PostgreSQL is temporarily offline during local review).*
+The API connects to PostgreSQL before listening and reports database readiness at `/health`. The Prisma schema and connection are being introduced first; most API controllers still use the in-memory store and will need to be migrated to Prisma for application records to persist.
 
 ### 4. Running the Development Servers
 Run both client and server concurrently from the monorepo root:

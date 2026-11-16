@@ -1,14 +1,15 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ChevronRight,
-  MoreHorizontal,
   CheckCircle,
   Laptop,
   Boxes,
   UserCheck
 } from 'lucide-react';
 import { Expense } from '../../types';
+import { CardActionMenu } from '../common/CardActionMenu';
+import { Modal } from '../common/Modal';
 
 interface RightPanelSummaryProps {
   balance: number;
@@ -23,6 +24,7 @@ export const RightPanelSummary: React.FC<RightPanelSummaryProps> = ({
   onViewMoreTransactions,
 }) => {
   const navigate = useNavigate();
+  const [isPeopleDialogOpen, setIsPeopleDialogOpen] = useState(false);
 
   const todayTransactions = [
     {
@@ -57,7 +59,7 @@ export const RightPanelSummary: React.FC<RightPanelSummaryProps> = ({
   return (
     <div className="flex flex-col gap-6">
       {/* Balance & Date Header matching Screenshot */}
-      <div className="bg-transparent px-2 pt-2">
+      <div className="bg-transparent px-2 pt-2 xl:pt-14">
         <h2 className="text-3xl font-extrabold text-navy tracking-tight">
           $ {balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
         </h2>
@@ -67,7 +69,7 @@ export const RightPanelSummary: React.FC<RightPanelSummaryProps> = ({
       </div>
 
       {/* Today Section */}
-      <div className="bg-white rounded-4xl p-6 shadow-comet">
+      <div className="card-hover bg-white rounded-4xl p-6 shadow-comet">
         <div className="flex items-center justify-between mb-4">
           <span className="text-xs font-bold text-navy uppercase tracking-wider">Today</span>
         </div>
@@ -116,17 +118,21 @@ export const RightPanelSummary: React.FC<RightPanelSummaryProps> = ({
       </div>
 
       {/* Loan Calculator / Budget Tracker Card */}
-      <div className="bg-white rounded-4xl p-6 shadow-comet flex flex-col justify-between">
+      <div className="card-hover bg-white rounded-4xl p-6 shadow-comet flex flex-col justify-between">
         <div className="flex items-start justify-between mb-2">
           <div>
             <h3 className="text-base font-bold text-navy">Loan Calculator</h3>
             <p className="text-[11px] text-navy-muted mt-0.5 max-w-[200px]">
-              Select the amount needed and the reimbursement period
+              Choose a loan amount and term
             </p>
           </div>
-          <button className="text-navy-muted hover:text-navy">
-            <MoreHorizontal className="w-4 h-4" />
-          </button>
+          <CardActionMenu
+            label="Loan summary actions"
+            actions={[
+              { label: 'Manage Budgets', onSelect: () => navigate('/budgets') },
+              { label: 'View Transactions', onSelect: () => navigate('/transactions') },
+            ]}
+          />
         </div>
 
         {/* Blue Pill Amount Display with slider illusion matching screenshot */}
@@ -163,13 +169,37 @@ export const RightPanelSummary: React.FC<RightPanelSummaryProps> = ({
             </div>
           </div>
           <button
-            onClick={() => navigate('/budgets')}
+            onClick={() => setIsPeopleDialogOpen(true)}
             className="text-[11px] font-semibold text-primary hover:underline"
           >
             View More people
           </button>
         </div>
       </div>
+
+      <Modal
+        isOpen={isPeopleDialogOpen}
+        onClose={() => setIsPeopleDialogOpen(false)}
+        title="People"
+        subtitle="Your dashboard community summary"
+        maxWidth="sm"
+      >
+        <div className="rounded-2xl border border-purple-100 bg-primary-light/50 p-4">
+          <p className="text-2xl font-extrabold text-navy">18 people</p>
+          <p className="mt-1 text-xs leading-relaxed text-navy-muted">
+            This card only contains a community count. A people directory is not available yet, so it no longer redirects to Budgets.
+          </p>
+        </div>
+        <div className="mt-5 flex justify-end">
+          <button
+            type="button"
+            onClick={() => setIsPeopleDialogOpen(false)}
+            className="rounded-full bg-primary px-5 py-2.5 text-xs font-bold text-white transition-colors hover:bg-primary-hover"
+          >
+            Close
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 };
