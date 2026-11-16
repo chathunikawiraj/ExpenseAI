@@ -1,0 +1,400 @@
+import React, { useState } from 'react';
+import { AppShell } from '../../components/layout/AppShell';
+import { Modal } from '../../components/common/Modal';
+import { useToast } from '../../components/common/Toast';
+import {
+  ShieldAlert,
+  Users,
+  UserCheck,
+  UserX,
+  FileText,
+  CheckCircle,
+  Search,
+  Lock,
+  Plus,
+  Trash2,
+  Tag,
+  AlertTriangle
+} from 'lucide-react';
+import { mockCategories } from '../../data/mockData';
+
+interface AdminUser {
+  id: string;
+  name: string;
+  email: string;
+  role: 'USER' | 'ADMIN';
+  status: 'ACTIVE' | 'SUSPENDED';
+  joinedDate: string;
+  uploadsCount: number;
+}
+
+export const AdminDashboardPage: React.FC = () => {
+  const { showToast } = useToast();
+
+  const [activeTab, setActiveTab] = useState<'users' | 'categories'>('users');
+  const [searchTerm, setSearchTerm] = useState('');
+
+  // Mock Admin Users
+  const [usersList, setUsersList] = useState<AdminUser[]>([
+    {
+      id: 'usr_01',
+      name: 'Jonathan Ward',
+      email: 'jonathan@example.com',
+      role: 'ADMIN',
+      status: 'ACTIVE',
+      joinedDate: '2026-08-01',
+      uploadsCount: 14,
+    },
+    {
+      id: 'usr_02',
+      name: 'Sarah Connor',
+      email: 'sarah.c@techcorp.io',
+      role: 'USER',
+      status: 'ACTIVE',
+      joinedDate: '2026-08-15',
+      uploadsCount: 28,
+    },
+    {
+      id: 'usr_03',
+      name: 'Michael Chen',
+      email: 'mchen.dev@gmail.com',
+      role: 'USER',
+      status: 'SUSPENDED',
+      joinedDate: '2026-09-01',
+      uploadsCount: 3,
+    },
+    {
+      id: 'usr_04',
+      name: 'Elena Rostova',
+      email: 'elena@financehub.org',
+      role: 'USER',
+      status: 'ACTIVE',
+      joinedDate: '2026-09-04',
+      uploadsCount: 42,
+    },
+  ]);
+
+  // Default Categories List (FR-37)
+  const [defaultCats, setDefaultCats] = useState(mockCategories);
+  const [newCatName, setNewCatName] = useState('');
+  const [newCatColor, setNewCatColor] = useState('#9275F5');
+  const [isAddCatModalOpen, setIsAddCatModalOpen] = useState(false);
+
+  const toggleUserStatus = (userId: string) => {
+    setUsersList(
+      usersList.map((u) => {
+        if (u.id === userId) {
+          const nextStatus = u.status === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE';
+          showToast(`User ${u.name} is now ${nextStatus} (FR-36).`, 'info');
+          return { ...u, status: nextStatus };
+        }
+        return u;
+      })
+    );
+  };
+
+  const deleteUser = (userId: string) => {
+    setUsersList(usersList.filter((u) => u.id !== userId));
+    showToast('User account successfully removed (FR-36).', 'success');
+  };
+
+  const handleAddCategory = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCatName.trim()) return;
+
+    const newCategory = {
+      id: `cat_${Date.now()}`,
+      name: newCatName.trim(),
+      isDefault: true,
+      color: newCatColor,
+      icon: 'Tag',
+    };
+
+    setDefaultCats([...defaultCats, newCategory]);
+    showToast(`Platform default category "${newCatName}" added (FR-37)!`, 'success');
+    setIsAddCatModalOpen(false);
+    setNewCatName('');
+  };
+
+  const filteredUsers = usersList.filter(
+    (u) =>
+      u.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      u.email.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  return (
+    <AppShell isAdmin={true}>
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-navy tracking-tight flex items-center gap-2">
+            <span>Admin Operator Portal</span>
+            <ShieldAlert className="w-6 h-6 text-primary" />
+          </h1>
+          <p className="text-xs text-navy-muted mt-0.5">
+            System health, user accounts management, and default categories configuration.
+          </p>
+        </div>
+
+        {/* FR-38 Privacy Rule Badge */}
+        <div className="flex items-center gap-2 px-3.5 py-1.5 bg-purple-50 text-primary border border-purple-200 rounded-full text-xs font-bold shadow-sm">
+          <Lock className="w-4 h-4" />
+          <span>Strict Privacy Barrier: Zero Transaction Access (FR-38)</span>
+        </div>
+      </div>
+
+      {/* Admin KPIs Grid (FR-35) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="bg-white rounded-4xl p-6 shadow-comet flex items-center justify-between">
+          <div>
+            <span className="text-xs font-semibold text-navy-muted">Total Users</span>
+            <h3 className="text-2xl font-extrabold text-navy mt-1">1,248</h3>
+            <span className="text-[11px] font-bold text-emerald-600 mt-1 block">+12 this week</span>
+          </div>
+          <div className="w-12 h-12 rounded-3xl bg-primary-light text-primary flex items-center justify-center">
+            <Users className="w-6 h-6 stroke-[2]" />
+          </div>
+        </div>
+
+        <div className="bg-card-blue rounded-4xl p-6 shadow-comet flex items-center justify-between">
+          <div>
+            <span className="text-xs font-semibold text-navy/70">Active Users</span>
+            <h3 className="text-2xl font-extrabold text-navy mt-1">984</h3>
+            <span className="text-[11px] font-bold text-navy/80 mt-1 block">78.8% engagement</span>
+          </div>
+          <div className="w-12 h-12 rounded-3xl bg-white text-primary flex items-center justify-center shadow-sm">
+            <UserCheck className="w-6 h-6 stroke-[2]" />
+          </div>
+        </div>
+
+        <div className="bg-card-lavender rounded-4xl p-6 shadow-comet flex items-center justify-between">
+          <div>
+            <span className="text-xs font-semibold text-navy/70">Receipt Uploads</span>
+            <h3 className="text-2xl font-extrabold text-navy mt-1">3,420</h3>
+            <span className="text-[11px] font-bold text-navy/80 mt-1 block">Total images stored</span>
+          </div>
+          <div className="w-12 h-12 rounded-3xl bg-white text-primary flex items-center justify-center shadow-sm">
+            <FileText className="w-6 h-6 stroke-[2]" />
+          </div>
+        </div>
+
+        <div className="bg-white rounded-4xl p-6 shadow-comet flex items-center justify-between">
+          <div>
+            <span className="text-xs font-semibold text-navy-muted">OCR Success Rate</span>
+            <h3 className="text-2xl font-extrabold text-emerald-600 mt-1">91.4%</h3>
+            <span className="text-[11px] text-navy-muted mt-1 block">Target &gt; 85% (FR-19)</span>
+          </div>
+          <div className="w-12 h-12 rounded-3xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+            <CheckCircle className="w-6 h-6 stroke-[2]" />
+          </div>
+        </div>
+      </div>
+
+      {/* Tabs & Controls Bar */}
+      <div className="bg-white rounded-3xl p-4 shadow-comet flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-2 bg-[#F8F9FE] p-1 rounded-full border border-gray-100">
+          <button
+            onClick={() => setActiveTab('users')}
+            className={`px-5 py-1.5 rounded-full text-xs font-bold transition-all ${
+              activeTab === 'users'
+                ? 'bg-primary text-white shadow-comet-glow'
+                : 'text-navy-muted hover:text-navy'
+            }`}
+          >
+            User Accounts (FR-36)
+          </button>
+          <button
+            onClick={() => setActiveTab('categories')}
+            className={`px-5 py-1.5 rounded-full text-xs font-bold transition-all ${
+              activeTab === 'categories'
+                ? 'bg-primary text-white shadow-comet-glow'
+                : 'text-navy-muted hover:text-navy'
+            }`}
+          >
+            Default Categories (FR-37)
+          </button>
+        </div>
+
+        {activeTab === 'users' && (
+          <div className="relative min-w-[260px]">
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search user name or email..."
+              className="w-full pl-9 pr-4 py-1.5 bg-[#F8F9FE] text-xs text-navy rounded-full border border-gray-200 focus:outline-none focus:border-primary/40"
+            />
+            <Search className="w-3.5 h-3.5 text-navy-muted absolute left-3 top-1/2 -translate-y-1/2" />
+          </div>
+        )}
+
+        {activeTab === 'categories' && (
+          <button
+            onClick={() => setIsAddCatModalOpen(true)}
+            className="px-5 py-2 bg-primary text-white text-xs font-bold rounded-full shadow-comet-glow flex items-center gap-1.5"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Add Default Category</span>
+          </button>
+        )}
+      </div>
+
+      {/* Tab 1: Users Management (FR-36) */}
+      {activeTab === 'users' && (
+        <div className="bg-white rounded-4xl p-6 sm:p-7 shadow-comet overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead className="border-b border-gray-100 text-[11px] font-bold text-navy-muted uppercase tracking-wider">
+                <tr>
+                  <th className="py-3 px-4">User</th>
+                  <th className="py-3 px-4">Role</th>
+                  <th className="py-3 px-4">Status</th>
+                  <th className="py-3 px-4">Joined</th>
+                  <th className="py-3 px-4">Receipts</th>
+                  <th className="py-3 px-4 text-center">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {filteredUsers.map((user) => (
+                  <tr key={user.id} className="hover:bg-navy-light/40 transition-colors">
+                    <td className="py-3.5 px-4">
+                      <div className="font-bold text-navy">{user.name}</div>
+                      <div className="text-[10px] text-navy-muted">{user.email}</div>
+                    </td>
+
+                    <td className="py-3.5 px-4 font-semibold text-navy">
+                      <span
+                        className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                          user.role === 'ADMIN'
+                            ? 'bg-purple-100 text-primary'
+                            : 'bg-gray-100 text-navy'
+                        }`}
+                      >
+                        {user.role}
+                      </span>
+                    </td>
+
+                    <td className="py-3.5 px-4">
+                      <span
+                        className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                          user.status === 'ACTIVE'
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : 'bg-rose-100 text-rose-700'
+                        }`}
+                      >
+                        {user.status}
+                      </span>
+                    </td>
+
+                    <td className="py-3.5 px-4 text-navy-muted font-medium">
+                      {user.joinedDate}
+                    </td>
+
+                    <td className="py-3.5 px-4 text-navy font-bold">
+                      {user.uploadsCount} files
+                    </td>
+
+                    <td className="py-3.5 px-4 text-center">
+                      <div className="flex items-center justify-center gap-2">
+                        <button
+                          onClick={() => toggleUserStatus(user.id)}
+                          className={`px-3 py-1 rounded-full text-[11px] font-bold transition-colors ${
+                            user.status === 'ACTIVE'
+                              ? 'bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200'
+                              : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200'
+                          }`}
+                        >
+                          {user.status === 'ACTIVE' ? 'Suspend' : 'Reactivate'}
+                        </button>
+                        <button
+                          onClick={() => deleteUser(user.id)}
+                          className="p-1.5 text-navy-muted hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors"
+                          title="Delete user"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Tab 2: Default Categories Manager (FR-37) */}
+      {activeTab === 'categories' && (
+        <div className="bg-white rounded-4xl p-6 sm:p-7 shadow-comet flex flex-col gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+            {defaultCats.map((cat) => (
+              <div
+                key={cat.id}
+                className="p-4 rounded-3xl border border-gray-100 flex items-center justify-between bg-[#F8F9FE]"
+              >
+                <div className="flex items-center gap-3">
+                  <span
+                    className="w-4 h-4 rounded-full"
+                    style={{ backgroundColor: cat.color || '#9275F5' }}
+                  />
+                  <span className="text-xs font-bold text-navy">{cat.name}</span>
+                </div>
+                <span className="text-[10px] font-semibold text-navy-muted bg-white px-2 py-0.5 rounded-full border">
+                  Default
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Add Default Category Modal */}
+      <Modal
+        isOpen={isAddCatModalOpen}
+        onClose={() => setIsAddCatModalOpen(false)}
+        title="Add System Default Category"
+        subtitle="This category will be pre-loaded for all registered accounts (FR-37)."
+      >
+        <form onSubmit={handleAddCategory} className="flex flex-col gap-4">
+          <div>
+            <label className="block text-xs font-bold text-navy mb-1">Category Name</label>
+            <input
+              type="text"
+              required
+              value={newCatName}
+              onChange={(e) => setNewCatName(e.target.value)}
+              placeholder="e.g. Subscriptions & SaaS"
+              className="w-full px-4 py-2.5 bg-[#F8F9FE] text-xs font-medium text-navy rounded-2xl border border-gray-200 focus:outline-none focus:border-primary"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-navy mb-1">Hex Color Tag</label>
+            <input
+              type="color"
+              value={newCatColor}
+              onChange={(e) => setNewCatColor(e.target.value)}
+              className="w-16 h-10 p-1 bg-transparent rounded-xl cursor-pointer"
+            />
+          </div>
+
+          <div className="flex items-center justify-end gap-3 mt-4 pt-3 border-t border-gray-100">
+            <button
+              type="button"
+              onClick={() => setIsAddCatModalOpen(false)}
+              className="px-5 py-2.5 bg-gray-100 text-navy text-xs font-bold rounded-full"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="px-6 py-2.5 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow"
+            >
+              Save Default Category
+            </button>
+          </div>
+        </form>
+      </Modal>
+    </AppShell>
+  );
+};

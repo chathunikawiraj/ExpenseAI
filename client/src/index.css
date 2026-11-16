@@ -1,0 +1,85 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    background-color: #171A2B;
+    color: #F4F2FF;
+  }
+}
+
+/* Subtle purple ambient glow for the Midnight AI theme */
+.bg-ambient-blobs {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.blob-pink {
+  position: absolute;
+  width: 500px;
+  height: 500px;
+  background: radial-gradient(circle, rgba(146, 117, 245, 0.12) 0%, rgba(146, 117, 245, 0) 70%);
+  filter: blur(60px);
+  top: -150px;
+  left: 15%;
+  border-radius: 50%;
+}
+
+.blob-lavender {
+  position: absolute;
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(circle, rgba(180, 154, 255, 0.1) 0%, rgba(180, 154, 255, 0) 70%);
+  filter: blur(80px);
+  top: -200px;
+  right: -100px;
+  border-radius: 50%;
+}
+
+.blob-blue {
+  position: absolute;
+  width: 550px;
+  height: 550px;
+  background: radial-gradient(circle, rgba(100, 127, 234, 0.1) 0%, rgba(100, 127, 234, 0) 70%);
+  filter: blur(70px);
+  bottom: -150px;
+  left: -100px;
+  border-radius: 50%;
+}
+
+/* Custom soft scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #363B55;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #647FEA;
+}
+
+@layer utilities {
+  .bg-navy {
+    background-color: #171A2B;
+  }
+
+  .text-white {
+    color: #F4F2FF;
+  }
+}
+
+[class~="bg-[#F8F9FE]"] {
+  background-color: #22263A;
+}
