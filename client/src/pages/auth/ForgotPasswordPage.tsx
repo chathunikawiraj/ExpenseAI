@@ -2,17 +2,26 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useToast } from '../../components/common/Toast';
 import { Rocket, Mail, ArrowRight, ArrowLeft } from 'lucide-react';
+import { authApi } from '../../services/apiService';
 
 export const ForgotPasswordPage: React.FC = () => {
   const { showToast } = useToast();
   const [email, setEmail] = useState('');
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsSubmitted(true);
-    // Generic response does not reveal whether email is registered (FR-05)
-    showToast('If an account exists, a single-use 30-minute password reset link was sent.', 'info');
+    setIsSubmitting(true);
+    try {
+      await authApi.forgotPassword(email.trim());
+      setIsSubmitted(true);
+      showToast('If an account exists, the request was accepted. Email delivery is not configured in this backend yet.', 'info');
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not request a password reset.', 'error');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -29,13 +38,13 @@ export const ForgotPasswordPage: React.FC = () => {
         </div>
         <h2 className="text-2xl font-black text-navy text-center">Reset Password</h2>
         <p className="text-xs text-navy-muted text-center mt-1">
-          Enter your email address to receive a 30-minute recovery link (FR-05).
+          Request a 30-minute recovery link (FR-05). Email delivery is not configured in the current backend.
         </p>
 
         {isSubmitted ? (
           <div className="w-full my-6 p-4 rounded-3xl bg-purple-50 border border-purple-100 text-center">
             <p className="text-xs font-semibold text-navy">
-              Check your inbox for the password reset instructions.
+              If an account exists, the request was accepted. The current backend does not send recovery emails yet.
             </p>
           </div>
         ) : (
@@ -57,9 +66,10 @@ export const ForgotPasswordPage: React.FC = () => {
 
             <button
               type="submit"
-              className="w-full py-3 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow transition-all flex items-center justify-center gap-2"
+              disabled={isSubmitting}
+              className="w-full py-3 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow transition-all flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              <span>Send Recovery Link</span>
+              <span>{isSubmitting ? 'Sending...' : 'Send Recovery Link'}</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </form>

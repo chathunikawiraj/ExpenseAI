@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AppShell } from '../components/layout/AppShell';
 import { useToast } from '../components/common/Toast';
 import {
@@ -15,18 +15,45 @@ import {
 import { mockInsights } from '../data/mockData';
 import { insightsApi } from '../services/apiService';
 import { InsightItem } from '../types';
+import { getAccessToken } from '../services/api';
+import { ResourceStatus } from '../components/common/ResourceStatus';
 
 export const AiInsightsPage: React.FC = () => {
   const { showToast } = useToast();
   const [insights, setInsights] = useState<InsightItem[]>(mockInsights);
   const [isRegenerating, setIsRegenerating] = useState(false);
+  const [isLoading, setIsLoading] = useState(Boolean(getAccessToken()));
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!getAccessToken()) {
+      setIsLoading(false);
+      return;
+    }
+
+    let active = true;
+    insightsApi.getInsights()
+      .then((items) => {
+        if (active) setInsights(items);
+      })
+      .catch((cause: unknown) => {
+        if (active) setLoadError(cause instanceof Error ? cause.message : 'The server request failed.');
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleRegenerate = async () => {
     setIsRegenerating(true);
     try {
-      const res = await insightsApi.generateInsights('2026-09').catch(() => null);
-      if (res && res.insight) {
-        setInsights([res.insight, ...insights]);
+      if (getAccessToken()) {
+        const res = await insightsApi.generateInsights('2026-09');
+        setInsights((items) => [res.insight, ...items]);
         showToast('New AI spending analysis generated successfully!', 'success');
       } else {
         const generatedInsight: InsightItem = {
@@ -37,9 +64,11 @@ export const AiInsightsPage: React.FC = () => {
           source: 'AI',
           createdAt: new Date().toISOString(),
         };
-        setInsights([generatedInsight, ...insights]);
-        showToast('New AI spending analysis generated successfully!', 'success');
+        setInsights((items) => [generatedInsight, ...items]);
+        showToast('Demo insight added locally. Sign in to generate a server-backed insight.', 'info');
       }
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not generate insights.', 'error');
     } finally {
       setIsRegenerating(false);
     }
@@ -58,6 +87,19 @@ export const AiInsightsPage: React.FC = () => {
             Personalized algorithmic & OpenAI observations derived strictly from aggregated category figures (FR-30 to FR-33).
           </p>
         </div>
+
+        <ResourceStatus
+          isLoading={isLoading}
+          error={loadError}
+          onRetry={() => {
+            setLoadError(null);
+            setIsLoading(true);
+            insightsApi.getInsights()
+              .then(setInsights)
+              .catch((cause: unknown) => setLoadError(cause instanceof Error ? cause.message : 'The server request failed.'))
+              .finally(() => setIsLoading(false));
+          }}
+        />
 
         <button
           onClick={handleRegenerate}

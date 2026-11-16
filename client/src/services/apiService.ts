@@ -70,6 +70,13 @@ export const transactionsApi = {
     });
   },
 
+  async updateIncome(id: string, data: Partial<Income>) {
+    return apiRequest<Income>(`/incomes/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
   async deleteIncome(id: string) {
     return apiRequest(`/incomes/${id}`, { method: 'DELETE' });
   },
@@ -84,6 +91,13 @@ export const transactionsApi = {
   async createExpense(data: Partial<Expense>) {
     return apiRequest<Expense>('/expenses', {
       method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async updateExpense(id: string, data: Partial<Expense>) {
+    return apiRequest<Expense>(`/expenses/${id}`, {
+      method: 'PUT',
       body: JSON.stringify(data),
     });
   },

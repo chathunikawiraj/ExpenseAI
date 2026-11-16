@@ -1,16 +1,19 @@
 import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useToast } from '../../components/common/Toast';
 import { Rocket, Lock, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { authApi } from '../../services/apiService';
 
 export const ResetPasswordPage: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { showToast } = useToast();
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
 
-  const handleReset = (e: React.FormEvent) => {
+  const handleReset = async (e: React.FormEvent) => {
     e.preventDefault();
     if (password.length < 8 || !/[a-zA-Z]/.test(password) || !/[0-9]/.test(password)) {
       showToast('Password must be 8+ characters with a letter and a number (FR-01).', 'error');
@@ -21,8 +24,22 @@ export const ResetPasswordPage: React.FC = () => {
       return;
     }
 
-    showToast('Your password has been successfully reset! Please sign in (FR-05).', 'success');
-    navigate('/login');
+    const token = searchParams.get('token');
+    if (!token) {
+      showToast('The password reset link is missing its token. Request a new link.', 'error');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await authApi.resetPassword(token, password);
+      showToast('Your password has been successfully reset! Please sign in (FR-05).', 'success');
+      navigate('/login');
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not reset your password.', 'error');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -75,9 +92,10 @@ export const ResetPasswordPage: React.FC = () => {
 
           <button
             type="submit"
-            className="w-full mt-2 py-3 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow transition-all flex items-center justify-center gap-2"
+            disabled={isSubmitting}
+            className="w-full mt-2 py-3 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow transition-all flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            <span>Save New Password</span>
+            <span>{isSubmitting ? 'Saving...' : 'Save New Password'}</span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </form>
