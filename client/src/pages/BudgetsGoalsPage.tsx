@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { AppShell } from '../components/layout/AppShell';
 import { BudgetProgress } from '../components/common/BudgetProgress';
 import { Modal } from '../components/common/Modal';
@@ -20,11 +20,46 @@ import {
   mockCategories,
 } from '../data/mockData';
 import { Budget, SavingsGoal } from '../types';
+import { getAccessToken } from '../services/api';
+import { budgetsApi } from '../services/apiService';
+import { mockUser } from '../data/mockData';
+import { ResourceStatus } from '../components/common/ResourceStatus';
 
 export const BudgetsGoalsPage: React.FC = () => {
   const { showToast } = useToast();
   const [budgets, setBudgets] = useState<Budget[]>(mockBudgets);
   const [goals, setGoals] = useState<SavingsGoal[]>(mockSavingsGoals);
+  const [isLoading, setIsLoading] = useState(Boolean(getAccessToken()));
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const loadData = useCallback(async () => {
+    const [nextBudgets, nextGoals] = await Promise.all([
+      budgetsApi.getBudgets('2026-09'),
+      budgetsApi.getGoals(),
+    ]);
+    setBudgets(nextBudgets);
+    setGoals(nextGoals);
+  }, []);
+
+  useEffect(() => {
+    if (!getAccessToken()) {
+      setIsLoading(false);
+      return;
+    }
+
+    let active = true;
+    loadData()
+      .catch((cause: unknown) => {
+        if (active) setLoadError(cause instanceof Error ? cause.message : 'The server request failed.');
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [loadData]);
 
   // Modals
   const [isAddBudgetOpen, setIsAddBudgetOpen] = useState(false);
@@ -42,7 +77,7 @@ export const BudgetsGoalsPage: React.FC = () => {
 
   const overallBudget = budgets.find((b) => b.categoryId === null) || budgets[0];
 
-  const handleSaveBudget = (e: React.FormEvent) => {
+  const handleSaveBudget = async (e: React.FormEvent) => {
     e.preventDefault();
     const amountNum = parseFloat(budgetAmount);
     if (isNaN(amountNum) || amountNum <= 0) return;
@@ -50,46 +85,74 @@ export const BudgetsGoalsPage: React.FC = () => {
     const catId = budgetCategory === 'overall' ? null : budgetCategory;
     const cat = mockCategories.find((c) => c.id === catId);
 
-    const newBudget: Budget = {
-      id: `bud_${Date.now()}`,
-      userId: 'usr_01j7890123456789abcdef01',
-      categoryId: catId,
-      category: cat,
-      month: '2026-09',
-      amount: amountNum,
-      spent: 0,
-      percentage: 0,
-    };
-
-    setBudgets([newBudget, ...budgets]);
-    showToast(`Budget for ${cat?.name || 'Overall'} saved!`, 'success');
-    setIsAddBudgetOpen(false);
-    setBudgetAmount('');
+    setIsSaving(true);
+    try {
+      if (getAccessToken()) {
+        await budgetsApi.createOrUpdateBudget({ categoryId: catId, month: '2026-09', amount: amountNum });
+        await loadData();
+      } else {
+        const newBudget: Budget = {
+          id: `bud_${Date.now()}`,
+          userId: mockUser.id,
+          categoryId: catId,
+          category: cat,
+          month: '2026-09',
+          amount: amountNum,
+          spent: 0,
+          percentage: 0,
+        };
+        setBudgets((items) => [newBudget, ...items]);
+      }
+      showToast(`Budget for ${cat?.name || 'Overall'} saved!`, 'success');
+      setIsAddBudgetOpen(false);
+      setBudgetAmount('');
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not save this budget.', 'error');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const handleSaveGoal = (e: React.FormEvent) => {
+  const handleSaveGoal = async (e: React.FormEvent) => {
     e.preventDefault();
     const target = parseFloat(goalTargetAmount);
     const saved = parseFloat(goalCurrentAmount) || 0;
     if (isNaN(target) || target <= 0) return;
 
-    const newGoal: SavingsGoal = {
-      id: `goal_${Date.now()}`,
-      userId: 'usr_01j7890123456789abcdef01',
-      name: goalName,
-      targetAmount: target,
-      savedAmount: saved,
-      targetDate: goalTargetDate,
-      color: '#9275F5',
-    };
-
-    setGoals([...goals, newGoal]);
-    showToast(`Savings goal "${goalName}" created!`, 'success');
-    setIsAddGoalOpen(false);
-    setGoalName('');
-    setGoalTargetAmount('');
-    setGoalCurrentAmount('');
-    setGoalTargetDate('');
+    setIsSaving(true);
+    try {
+      if (getAccessToken()) {
+        const goal = await budgetsApi.createGoal({
+          name: goalName.trim(),
+          targetAmount: target,
+          savedAmount: saved,
+          targetDate: goalTargetDate,
+          color: '#9275F5',
+        });
+        setGoals((items) => [...items, goal]);
+      } else {
+        const newGoal: SavingsGoal = {
+          id: `goal_${Date.now()}`,
+          userId: mockUser.id,
+          name: goalName.trim(),
+          targetAmount: target,
+          savedAmount: saved,
+          targetDate: goalTargetDate,
+          color: '#9275F5',
+        };
+        setGoals((items) => [...items, newGoal]);
+      }
+      showToast(`Savings goal "${goalName}" created!`, 'success');
+      setIsAddGoalOpen(false);
+      setGoalName('');
+      setGoalTargetAmount('');
+      setGoalCurrentAmount('');
+      setGoalTargetDate('');
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not create this goal.', 'error');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -104,6 +167,18 @@ export const BudgetsGoalsPage: React.FC = () => {
             Real-time monthly threshold monitoring (50%, 80%, 100%) and long-term milestones.
           </p>
         </div>
+
+        <ResourceStatus
+          isLoading={isLoading}
+          error={loadError}
+          onRetry={() => {
+            setLoadError(null);
+            setIsLoading(true);
+            loadData()
+              .catch((cause: unknown) => setLoadError(cause instanceof Error ? cause.message : 'The server request failed.'))
+              .finally(() => setIsLoading(false));
+          }}
+        />
 
         <div className="flex items-center gap-3">
           <button
@@ -308,9 +383,10 @@ export const BudgetsGoalsPage: React.FC = () => {
             </button>
             <button
               type="submit"
-              className="px-6 py-2.5 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow"
+              disabled={isSaving}
+              className="px-6 py-2.5 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Save Budget
+              {isSaving ? 'Saving...' : 'Save Budget'}
             </button>
           </div>
         </form>
@@ -384,9 +460,10 @@ export const BudgetsGoalsPage: React.FC = () => {
             </button>
             <button
               type="submit"
-              className="px-6 py-2.5 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow"
+              disabled={isSaving}
+              className="px-6 py-2.5 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Create Goal
+              {isSaving ? 'Saving...' : 'Create Goal'}
             </button>
           </div>
         </form>

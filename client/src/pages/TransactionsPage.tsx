@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { AppShell } from '../components/layout/AppShell';
 import { Modal } from '../components/common/Modal';
@@ -21,6 +21,10 @@ import {
   mockCategories,
 } from '../data/mockData';
 import { Expense, Income, PaymentMethod } from '../types';
+import { getAccessToken } from '../services/api';
+import { transactionsApi } from '../services/apiService';
+import { ResourceStatus } from '../components/common/ResourceStatus';
+import { mockUser } from '../data/mockData';
 
 interface TransactionRow {
   id: string;
@@ -49,6 +53,11 @@ export const TransactionsPage: React.FC = () => {
   // Local state for interactive CRUD
   const [expensesList, setExpensesList] = useState<Expense[]>(mockExpenses);
   const [incomesList, setIncomesList] = useState<Income[]>(mockIncomes);
+  const [categories, setCategories] = useState(mockCategories);
+  const [isLoading, setIsLoading] = useState(Boolean(getAccessToken()));
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Modals state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -65,13 +74,45 @@ export const TransactionsPage: React.FC = () => {
   const [formPaymentMethod, setFormPaymentMethod] = useState<PaymentMethod>('DEBIT_CARD');
   const [formDescription, setFormDescription] = useState('');
 
+  useEffect(() => {
+    if (!getAccessToken()) {
+      setIsLoading(false);
+      return;
+    }
+
+    let active = true;
+    Promise.all([
+      transactionsApi.getExpenses({ limit: 100 }),
+      transactionsApi.getIncomes({ limit: 100 }),
+      transactionsApi.getCategories(),
+    ])
+      .then(([expenses, incomes, nextCategories]) => {
+        if (!active) return;
+        setExpensesList(expenses.data);
+        setIncomesList(incomes.data);
+        setCategories(nextCategories);
+      })
+      .catch((cause: unknown) => {
+        if (active) {
+          setLoadError(cause instanceof Error ? cause.message : 'The server request failed.');
+        }
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   // Combined list with unified fields
   const unifiedTransactions = useMemo(() => {
     const list: TransactionRow[] = [];
 
     if (activeTab === 'all' || activeTab === 'expenses') {
       expensesList.forEach((e) => {
-        const cat = mockCategories.find((c) => c.id === e.categoryId) || e.category;
+        const cat = categories.find((c) => c.id === e.categoryId) || e.category;
         list.push({
           id: e.id,
           title: e.title,
@@ -129,7 +170,7 @@ export const TransactionsPage: React.FC = () => {
     });
 
     return filtered;
-  }, [activeTab, expensesList, incomesList, searchTerm, selectedCategory, selectedPaymentMethod, sortBy, sortOrder]);
+  }, [activeTab, expensesList, incomesList, categories, searchTerm, selectedCategory, selectedPaymentMethod, sortBy, sortOrder]);
 
   const transactionSummary = useMemo(
     () =>
@@ -165,7 +206,7 @@ export const TransactionsPage: React.FC = () => {
     page * itemsPerPage
   );
 
-  const handleSaveTransaction = (e: React.FormEvent) => {
+  const handleSaveTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
     const parsedAmount = parseFloat(formAmount);
     if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
@@ -173,83 +214,102 @@ export const TransactionsPage: React.FC = () => {
       return;
     }
 
-    if (formType === 'expense') {
-      if (editTarget?.type === 'expense') {
-        setExpensesList((expenses) =>
-          expenses.map((expense) =>
-            expense.id === editTarget.id
-              ? {
-                  ...expense,
-                  title: formTitle.trim(),
-                  amount: parsedAmount,
-                  date: formDate,
-                  categoryId: formCategory,
-                  category: mockCategories.find((category) => category.id === formCategory),
-                  paymentMethod: formPaymentMethod,
-                  description: formDescription.trim(),
-                }
-              : expense,
-          ),
-        );
-      } else {
-        const newExpense: Expense = {
-          id: `exp_${Date.now()}`,
-          userId: 'usr_01j7890123456789abcdef01',
+    setIsSaving(true);
+    try {
+      if (formType === 'expense') {
+        const payload: Partial<Expense> = {
           title: formTitle.trim(),
           amount: parsedAmount,
           date: formDate,
           categoryId: formCategory,
-          category: mockCategories.find((category) => category.id === formCategory),
           paymentMethod: formPaymentMethod,
           description: formDescription.trim(),
           recurring: 'NONE',
-          createdAt: new Date().toISOString(),
         };
-        setExpensesList((expenses) => [newExpense, ...expenses]);
-      }
-    } else {
-      if (editTarget?.type === 'income') {
-        setIncomesList((incomes) =>
-          incomes.map((income) =>
-            income.id === editTarget.id
-              ? {
-                  ...income,
-                  source: formTitle.trim(),
-                  amount: parsedAmount,
-                  date: formDate,
-                  description: formDescription.trim(),
-                }
-              : income,
-          ),
-        );
+        const category = categories.find((item) => item.id === formCategory);
+
+        if (getAccessToken()) {
+          const saved = editTarget?.type === 'expense'
+            ? await transactionsApi.updateExpense(editTarget.id, payload)
+            : await transactionsApi.createExpense(payload);
+          const normalized = { ...saved, category: category || saved.category };
+          setExpensesList((items) =>
+            editTarget?.type === 'expense'
+              ? items.map((item) => (item.id === editTarget.id ? normalized : item))
+              : [normalized, ...items],
+          );
+        } else if (editTarget?.type === 'expense') {
+          setExpensesList((items) =>
+            items.map((item) => (item.id === editTarget.id ? { ...item, ...payload, category } : item)),
+          );
+        } else {
+          const newExpense: Expense = {
+            id: `exp_${Date.now()}`,
+            userId: mockUser.id,
+            title: formTitle.trim(),
+            amount: parsedAmount,
+            date: formDate,
+            categoryId: formCategory,
+            category,
+            paymentMethod: formPaymentMethod,
+            description: formDescription.trim(),
+            recurring: 'NONE',
+            createdAt: new Date().toISOString(),
+          };
+          setExpensesList((items) => [newExpense, ...items]);
+        }
       } else {
-        const newIncome: Income = {
-          id: `inc_${Date.now()}`,
-          userId: 'usr_01j7890123456789abcdef01',
+        const payload: Partial<Income> = {
           source: formTitle.trim(),
           amount: parsedAmount,
           date: formDate,
           description: formDescription.trim(),
           recurring: 'NONE',
-          createdAt: new Date().toISOString(),
         };
-        setIncomesList((incomes) => [newIncome, ...incomes]);
-      }
-    }
 
-    setIsAddModalOpen(false);
-    showToast(
-      `${editTarget ? 'Transaction updated' : 'Transaction added'} successfully.`,
-      'success',
-    );
-    if (!editTarget) {
-      setActiveTab('all');
-      setSearchTerm('');
-      setSelectedCategory('all');
-      setSelectedPaymentMethod('all');
+        if (getAccessToken()) {
+          const saved = editTarget?.type === 'income'
+            ? await transactionsApi.updateIncome(editTarget.id, payload)
+            : await transactionsApi.createIncome(payload);
+          setIncomesList((items) =>
+            editTarget?.type === 'income'
+              ? items.map((item) => (item.id === editTarget.id ? saved : item))
+              : [saved, ...items],
+          );
+        } else if (editTarget?.type === 'income') {
+          setIncomesList((items) =>
+            items.map((item) => (item.id === editTarget.id ? { ...item, ...payload } : item)),
+          );
+        } else {
+          const newIncome: Income = {
+            id: `inc_${Date.now()}`,
+            userId: mockUser.id,
+            source: formTitle.trim(),
+            amount: parsedAmount,
+            date: formDate,
+            description: formDescription.trim(),
+            recurring: 'NONE',
+            createdAt: new Date().toISOString(),
+          };
+          setIncomesList((items) => [newIncome, ...items]);
+        }
+      }
+
+      setIsAddModalOpen(false);
+      showToast(`${editTarget ? 'Transaction updated' : 'Transaction added'} successfully.`, 'success');
+      if (!editTarget) {
+        setActiveTab('all');
+        setSearchTerm('');
+        setSelectedCategory('all');
+        setSelectedPaymentMethod('all');
+      }
+      setCurrentPage(1);
+      resetForm();
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not save this transaction.', 'error');
+    } finally {
+      setIsSaving(false);
     }
-    setCurrentPage(1);
-    resetForm();
   };
 
   const resetForm = () => {
@@ -257,7 +317,7 @@ export const TransactionsPage: React.FC = () => {
     setFormAmount('');
     setFormDescription('');
     setFormDate(new Date().toISOString().split('T')[0]);
-    setFormCategory(mockCategories[0].id);
+    setFormCategory(categories[0]?.id || mockCategories[0].id);
     setFormPaymentMethod('DEBIT_CARD');
     setFormType('expense');
     setEditTarget(null);
@@ -287,16 +347,27 @@ export const TransactionsPage: React.FC = () => {
     setIsAddModalOpen(true);
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (!deleteTarget) return;
-    if (deleteTarget.type === 'expense') {
-      setExpensesList((expenses) => expenses.filter((expense) => expense.id !== deleteTarget.id));
-    } else {
-      setIncomesList((incomes) => incomes.filter((income) => income.id !== deleteTarget.id));
+    setIsDeleting(true);
+    try {
+      if (getAccessToken()) {
+        if (deleteTarget.type === 'expense') await transactionsApi.deleteExpense(deleteTarget.id);
+        else await transactionsApi.deleteIncome(deleteTarget.id);
+      }
+      if (deleteTarget.type === 'expense') {
+        setExpensesList((expenses) => expenses.filter((expense) => expense.id !== deleteTarget.id));
+      } else {
+        setIncomesList((incomes) => incomes.filter((income) => income.id !== deleteTarget.id));
+      }
+      setIsDeleteModalOpen(false);
+      setDeleteTarget(null);
+      showToast('Transaction deleted.', 'success');
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not delete this transaction.', 'error');
+    } finally {
+      setIsDeleting(false);
     }
-    setIsDeleteModalOpen(false);
-    setDeleteTarget(null);
-    showToast('Transaction deleted.', 'success');
   };
 
   return (
@@ -311,6 +382,27 @@ export const TransactionsPage: React.FC = () => {
             Manage your daily expenses, salary credits, and invoices
           </p>
         </div>
+
+        <ResourceStatus
+          isLoading={isLoading}
+          error={loadError}
+          onRetry={() => {
+            setLoadError(null);
+            setIsLoading(true);
+            Promise.all([
+              transactionsApi.getExpenses({ limit: 100 }),
+              transactionsApi.getIncomes({ limit: 100 }),
+              transactionsApi.getCategories(),
+            ])
+              .then(([expenses, incomes, nextCategories]) => {
+                setExpensesList(expenses.data);
+                setIncomesList(incomes.data);
+                setCategories(nextCategories);
+              })
+              .catch((cause: unknown) => setLoadError(cause instanceof Error ? cause.message : 'The server request failed.'))
+              .finally(() => setIsLoading(false));
+          }}
+        />
 
         <button
           onClick={openAddModal}
@@ -400,7 +492,7 @@ export const TransactionsPage: React.FC = () => {
             className="px-3 py-1.5 bg-[#F8F9FE] border border-gray-200 rounded-full text-xs font-semibold text-navy focus:outline-none"
           >
             <option value="all">All Categories</option>
-            {mockCategories.map((c) => (
+            {categories.map((c) => (
               <option key={c.id} value={c.name}>
                 {c.name}
               </option>
@@ -735,7 +827,7 @@ export const TransactionsPage: React.FC = () => {
                   onChange={(e) => setFormCategory(e.target.value)}
                   className="w-full px-3 py-2.5 bg-[#F8F9FE] text-xs font-medium text-navy rounded-2xl border border-gray-200 focus:outline-none focus:border-primary"
                 >
-                  {mockCategories.map((c) => (
+                  {categories.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
                     </option>
@@ -782,9 +874,10 @@ export const TransactionsPage: React.FC = () => {
             </button>
             <button
               type="submit"
+              disabled={isSaving}
               className="px-6 py-2.5 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow transition-all"
             >
-              {editTarget ? 'Update Transaction' : 'Save Transaction'}
+              {isSaving ? 'Saving...' : editTarget ? 'Update Transaction' : 'Save Transaction'}
             </button>
           </div>
         </form>
@@ -809,9 +902,10 @@ export const TransactionsPage: React.FC = () => {
           </button>
           <button
             onClick={confirmDelete}
+            disabled={isDeleting}
             className="px-6 py-2 bg-rose-500 hover:bg-rose-600 text-white text-xs font-bold rounded-full shadow-sm"
           >
-            Delete
+            {isDeleting ? 'Deleting...' : 'Delete'}
           </button>
         </div>
       </Modal>

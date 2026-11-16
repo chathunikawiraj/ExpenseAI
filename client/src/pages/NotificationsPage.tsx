@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { AlertTriangle, Bell, Check, CheckCheck, ReceiptText } from 'lucide-react';
 import { AppShell } from '../components/layout/AppShell';
 import { useNotifications } from '../context/NotificationContext';
+import { ResourceStatus } from '../components/common/ResourceStatus';
 
 type NotificationFilter = 'all' | 'unread';
 
@@ -12,7 +13,7 @@ const notificationDetails: Record<string, { title: string; icon: typeof Bell; co
 };
 
 export const NotificationsPage: React.FC = () => {
-  const { notifications, unreadCount, markAsRead, markAllAsRead } = useNotifications();
+  const { notifications, unreadCount, markAsRead, markAllAsRead, isLoading, error, reload } = useNotifications();
   const [filter, setFilter] = useState<NotificationFilter>('all');
   const visibleNotifications =
     filter === 'unread' ? notifications.filter((item) => !item.isRead) : notifications;
@@ -36,6 +37,8 @@ export const NotificationsPage: React.FC = () => {
           Mark all as read
         </button>
       </div>
+
+      <ResourceStatus isLoading={isLoading} error={error} onRetry={reload} />
 
       <div className="flex w-fit items-center gap-1 rounded-full border border-gray-100 bg-white p-1 shadow-sm">
         {(['all', 'unread'] as const).map((option) => (
