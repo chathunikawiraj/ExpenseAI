@@ -2,7 +2,6 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { User } from '../types';
 import { authApi } from '../services/apiService';
 import { getAccessToken } from '../services/api';
-import { mockUser } from '../data/mockData';
 
 interface AuthContextType {
   user: User | null;
@@ -15,7 +14,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(mockUser);
+  const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   useEffect(() => {
@@ -26,8 +25,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           setUser(profile);
         }
       } catch {
-        // Fall back to demo user profile for smooth exploration
-        setUser(mockUser);
+        setUser(null);
       } finally {
         setIsLoading(false);
       }

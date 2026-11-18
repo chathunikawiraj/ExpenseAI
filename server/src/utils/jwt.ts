@@ -8,25 +8,40 @@ export interface TokenPayload {
 }
 
 export const signAccessToken = (payload: TokenPayload): string => {
-  return jwt.sign(payload, env.JWT_SECRET, { expiresIn: '15m' }); // 15 min access token (FR-03)
+  return jwt.sign({ ...payload, tokenType: 'access' }, env.JWT_SECRET, { expiresIn: '15m' });
 };
 
 export const signRefreshToken = (payload: TokenPayload): string => {
-  return jwt.sign(payload, env.JWT_REFRESH_SECRET, { expiresIn: '7d' }); // 7 day refresh token (FR-03)
+  return jwt.sign({ ...payload, tokenType: 'refresh' }, env.JWT_REFRESH_SECRET, { expiresIn: '7d' });
+};
+
+const verifyToken = (token: string, secret: string, tokenType: 'access' | 'refresh'): TokenPayload | null => {
+  try {
+    const payload = jwt.verify(token, secret);
+    if (
+      typeof payload === 'string' ||
+      typeof payload.userId !== 'string' ||
+      typeof payload.email !== 'string' ||
+      (payload.role !== 'USER' && payload.role !== 'ADMIN') ||
+      payload.tokenType !== tokenType
+    ) {
+      return null;
+    }
+
+    return {
+      userId: payload.userId,
+      email: payload.email,
+      role: payload.role,
+    };
+  } catch {
+    return null;
+  }
 };
 
 export const verifyAccessToken = (token: string): TokenPayload | null => {
-  try {
-    return jwt.verify(token, env.JWT_SECRET) as TokenPayload;
-  } catch {
-    return null;
-  }
+  return verifyToken(token, env.JWT_SECRET, 'access');
 };
 
 export const verifyRefreshToken = (token: string): TokenPayload | null => {
-  try {
-    return jwt.verify(token, env.JWT_REFRESH_SECRET) as TokenPayload;
-  } catch {
-    return null;
-  }
+  return verifyToken(token, env.JWT_REFRESH_SECRET, 'refresh');
 };

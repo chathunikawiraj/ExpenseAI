@@ -25,6 +25,20 @@ export const authApi = {
     setAccessToken(null);
   },
 
+  async verifyEmail(token: string) {
+    return apiRequest('/auth/verify-email', {
+      method: 'POST',
+      body: JSON.stringify({ token }),
+    });
+  },
+
+  async resendVerificationEmail(email: string) {
+    return apiRequest('/auth/resend-verification', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+  },
+
   async getMe(): Promise<User> {
     return apiRequest('/auth/me');
   },
