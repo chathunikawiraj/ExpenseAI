@@ -1,0 +1,192 @@
+import 'dotenv/config';
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import express from 'express';
+import http from 'node:http';
+import app from '../app.js';
+import prisma from '../config/database.js';
+import { authenticate, requireRole } from '../middleware/auth.middleware.js';
+import { errorHandler } from '../middleware/errorHandler.js';
+
+test('registration, email verification, login, refresh, reset, and authorization', async () => {
+  await prisma.$connect();
+
+  const email = `auth.${process.pid}.${Date.now()}@example.test`;
+  const userPassword = 'TestUser123';
+  const links: string[] = [];
+  const originalInfo = console.info;
+  console.info = (...values: unknown[]) => {
+    const message = values.join(' ');
+    const url = message.match(/https?:\/\/\S+/)?.[0];
+    if (url) links.push(url);
+  };
+
+  let server: http.Server | undefined;
+  let roleServer: http.Server | undefined;
+  try {
+    const apiServer = app.listen(0);
+    server = apiServer;
+    await new Promise<void>((resolve) => apiServer.once('listening', resolve));
+    const apiAddress = apiServer.address();
+    assert.ok(apiAddress && typeof apiAddress !== 'string');
+    const baseUrl = `http://127.0.0.1:${apiAddress.port}/api/v1/auth`;
+
+    const invalidRegistration = await fetch(`${baseUrl}/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Test User', email, password: 'short' }),
+    });
+    assert.equal(invalidRegistration.status, 400);
+
+    const registration = await fetch(`${baseUrl}/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Test User', email, password: userPassword, currency: 'USD' }),
+    });
+    assert.equal(registration.status, 201);
+    const registrationData = await registration.json() as { user: { email: string; isVerified: boolean }; accessToken?: string };
+    assert.equal(registrationData.user.email, email);
+    assert.equal(registrationData.user.isVerified, false);
+    assert.equal(registrationData.accessToken, undefined);
+    assert.equal(links.length, 1);
+
+    const unverifiedLogin = await fetch(`${baseUrl}/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: userPassword }),
+    });
+    assert.equal(unverifiedLogin.status, 403);
+
+    const verificationToken = new URL(links[0]).searchParams.get('token');
+    assert.ok(verificationToken);
+    const verification = await fetch(`${baseUrl}/verify-email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: verificationToken }),
+    });
+    assert.equal(verification.status, 200);
+    const replayVerification = await fetch(`${baseUrl}/verify-email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: verificationToken }),
+    });
+    assert.equal(replayVerification.status, 400);
+
+    const login = await fetch(`${baseUrl}/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: userPassword }),
+    });
+    assert.equal(login.status, 200);
+    const session = await login.json() as { accessToken: string; user: { id: string } };
+    const initialCookie = login.headers.get('set-cookie')?.split(';')[0];
+    assert.ok(initialCookie);
+
+    const profile = await fetch(`${baseUrl}/me`, {
+      headers: { Authorization: `Bearer ${session.accessToken}` },
+    });
+    assert.equal(profile.status, 200);
+
+    const roleApp = express();
+    roleApp.get('/admin', authenticate, requireRole('ADMIN'), (_req, res) => res.sendStatus(204));
+    roleApp.use(errorHandler);
+    const testRoleServer = roleApp.listen(0);
+    roleServer = testRoleServer;
+    await new Promise<void>((resolve) => testRoleServer.once('listening', resolve));
+    const roleAddress = testRoleServer.address();
+    assert.ok(roleAddress && typeof roleAddress !== 'string');
+    const forbidden = await fetch(`http://127.0.0.1:${roleAddress.port}/admin`, {
+      headers: { Authorization: `Bearer ${session.accessToken}` },
+    });
+    assert.equal(forbidden.status, 403);
+
+    const refresh = await fetch(`${baseUrl}/refresh`, {
+      method: 'POST',
+      headers: { Cookie: initialCookie },
+    });
+    assert.equal(refresh.status, 200);
+    const rotatedCookie = refresh.headers.get('set-cookie')?.split(';')[0];
+    assert.ok(rotatedCookie);
+
+    const replayRefresh = await fetch(`${baseUrl}/refresh`, {
+      method: 'POST',
+      headers: { Cookie: initialCookie },
+    });
+    assert.equal(replayRefresh.status, 401);
+
+    const logout = await fetch(`${baseUrl}/logout`, {
+      method: 'POST',
+      headers: { Cookie: rotatedCookie },
+    });
+    assert.equal(logout.status, 200);
+
+    const activeSession = await fetch(`${baseUrl}/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: userPassword }),
+    });
+    const resetRevocationCookie = activeSession.headers.get('set-cookie')?.split(';')[0];
+    assert.ok(resetRevocationCookie);
+
+    const resetRequest = await fetch(`${baseUrl}/forgot-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    assert.equal(resetRequest.status, 200);
+    const resetToken = new URL(links[1]).searchParams.get('token');
+    assert.ok(resetToken);
+
+    const reset = await fetch(`${baseUrl}/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: resetToken, newPassword: 'NewTestUser456' }),
+    });
+    assert.equal(reset.status, 200);
+
+    const refreshAfterReset = await fetch(`${baseUrl}/refresh`, {
+      method: 'POST',
+      headers: { Cookie: resetRevocationCookie },
+    });
+    assert.equal(refreshAfterReset.status, 401);
+
+    const replayReset = await fetch(`${baseUrl}/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: resetToken, newPassword: 'AnotherPass789' }),
+    });
+    assert.equal(replayReset.status, 400);
+
+    const oldPasswordLogin = await fetch(`${baseUrl}/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: userPassword }),
+    });
+    assert.equal(oldPasswordLogin.status, 401);
+
+    const newPasswordLogin = await fetch(`${baseUrl}/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: 'NewTestUser456' }),
+    });
+    assert.equal(newPasswordLogin.status, 200);
+
+    const unknownEmailRequest = await fetch(`${baseUrl}/forgot-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: `missing.${Date.now()}@example.test` }),
+    });
+    assert.equal(unknownEmailRequest.status, 200);
+    assert.deepEqual(await unknownEmailRequest.json(), await resetRequest.json());
+  } finally {
+    console.info = originalInfo;
+    if (roleServer) await new Promise<void>((resolve, reject) => {
+      roleServer?.close((error) => error ? reject(error) : resolve());
+    });
+    if (server) await new Promise<void>((resolve, reject) => {
+      server?.close((error) => error ? reject(error) : resolve());
+    });
+    await prisma.user.deleteMany({ where: { email } });
+    await prisma.$disconnect();
+  }
+});

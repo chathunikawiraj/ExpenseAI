@@ -16,7 +16,7 @@ export const ForgotPasswordPage: React.FC = () => {
     try {
       await authApi.forgotPassword(email.trim());
       setIsSubmitted(true);
-      showToast('If an account exists, the request was accepted. Email delivery is not configured in this backend yet.', 'info');
+      showToast('If an account exists, a password reset link has been sent.', 'info');
     } catch (cause) {
       showToast(cause instanceof Error ? cause.message : 'Could not request a password reset.', 'error');
     } finally {
@@ -38,13 +38,13 @@ export const ForgotPasswordPage: React.FC = () => {
         </div>
         <h2 className="text-2xl font-black text-navy text-center">Reset Password</h2>
         <p className="text-xs text-navy-muted text-center mt-1">
-          Request a 30-minute recovery link (FR-05). Email delivery is not configured in the current backend.
+          Request a secure recovery link that expires after 30 minutes.
         </p>
 
         {isSubmitted ? (
           <div className="w-full my-6 p-4 rounded-3xl bg-purple-50 border border-purple-100 text-center">
             <p className="text-xs font-semibold text-navy">
-              If an account exists, the request was accepted. The current backend does not send recovery emails yet.
+              If an account exists, a password reset link has been sent.
             </p>
           </div>
         ) : (

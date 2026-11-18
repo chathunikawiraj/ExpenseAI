@@ -1,34 +1,34 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useToast } from '../../components/common/Toast';
-import { Rocket, Lock, Mail, ArrowRight, ShieldCheck, User } from 'lucide-react';
+import { Rocket, Lock, Mail, ArrowRight } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
 
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
   const { showToast } = useToast();
+  const { login } = useAuth();
 
-  const [email, setEmail] = useState('demo@expenseai.local');
-  const [password, setPassword] = useState('Demo123!');
-  const [rememberMe, setRememberMe] = useState(true);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password) {
       showToast('Please provide both email and password.', 'error');
       return;
     }
 
-    showToast('Signed in successfully! Welcome back, Jonathan.', 'success');
-    navigate('/dashboard');
-  };
-
-  const autofillCredentials = (role: 'admin' | 'demo') => {
-    if (role === 'admin') {
-      setEmail('admin@expenseai.local');
-      setPassword('Admin123!');
-    } else {
-      setEmail('demo@expenseai.local');
-      setPassword('Demo123!');
+    setIsSubmitting(true);
+    try {
+      await login(email.trim(), password);
+      showToast('Signed in successfully. Welcome back!', 'success');
+      navigate('/dashboard');
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not sign in.', 'error');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -50,25 +50,6 @@ export const LoginPage: React.FC = () => {
         <p className="text-xs text-navy-muted text-center mt-1">
           Sign in to your ExpenseAI personal dashboard
         </p>
-
-        {/* Quick Demo Autofill Pills */}
-        <div className="flex items-center gap-2 my-4 p-1.5 bg-[#F8F9FE] rounded-full border border-gray-100 text-[11px]">
-          <span className="text-navy-muted pl-2 font-medium">Quick Autofill:</span>
-          <button
-            type="button"
-            onClick={() => autofillCredentials('demo')}
-            className="px-3 py-1 bg-white hover:bg-gray-100 text-navy font-bold rounded-full shadow-sm"
-          >
-            Demo User
-          </button>
-          <button
-            type="button"
-            onClick={() => autofillCredentials('admin')}
-            className="px-3 py-1 bg-primary text-white font-bold rounded-full shadow-comet-glow"
-          >
-            Admin
-          </button>
-        </div>
 
         <form onSubmit={handleLogin} className="w-full flex flex-col gap-4 mt-2">
           <div>
@@ -106,23 +87,12 @@ export const LoginPage: React.FC = () => {
             />
           </div>
 
-          <div className="flex items-center justify-between pt-1">
-            <label className="flex items-center gap-2 cursor-pointer text-xs text-navy">
-              <input
-                type="checkbox"
-                checked={rememberMe}
-                onChange={(e) => setRememberMe(e.target.checked)}
-                className="rounded text-primary focus:ring-primary h-4 w-4"
-              />
-              <span>Remember me for 7 days</span>
-            </label>
-          </div>
-
           <button
             type="submit"
-            className="w-full mt-2 py-3 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow transition-all flex items-center justify-center gap-2"
+            disabled={isSubmitting}
+            className="w-full mt-2 py-3 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow transition-all flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            <span>Sign In to ExpenseAI</span>
+            <span>{isSubmitting ? 'Signing In...' : 'Sign In to ExpenseAI'}</span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </form>

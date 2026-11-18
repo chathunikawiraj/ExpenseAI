@@ -3,12 +3,10 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useToast } from '../../components/common/Toast';
 import { Rocket, Lock, Mail, User, ArrowRight, CheckCircle2 } from 'lucide-react';
 import { authApi } from '../../services/apiService';
-import { useAuth } from '../../context/AuthContext';
 
 export const RegisterPage: React.FC = () => {
   const navigate = useNavigate();
   const { showToast } = useToast();
-  const { updateUser } = useAuth();
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -33,9 +31,8 @@ export const RegisterPage: React.FC = () => {
     setIsSubmitting(true);
     try {
       const response = await authApi.register({ name: name.trim(), email: email.trim(), password, currency });
-      if (response.user) updateUser(response.user);
-      showToast('Account created. Email verification is not enabled by the current backend.', 'info');
-      navigate('/dashboard');
+      showToast(response.message || 'Account created. Check your email to verify your address.', 'success');
+      navigate(`/verify-email?email=${encodeURIComponent(email.trim())}`);
     } catch (cause) {
       showToast(cause instanceof Error ? cause.message : 'Could not create your account.', 'error');
     } finally {

@@ -53,8 +53,9 @@ model User {
   currency       String         @default("USD")
   monthlyIncome  Decimal        @default(0.00) @db.Decimal(12, 2)
   isVerified     Boolean        @default(false)
-  verificationToken String?
-  resetToken     String?
+  verificationToken String?        @unique
+  verificationExpiresAt DateTime?
+  resetToken     String?           @unique
   resetExpiresAt DateTime?
   status         UserStatus     @default(ACTIVE)
   createdAt      DateTime       @default(now())
