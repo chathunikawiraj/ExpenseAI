@@ -8,6 +8,7 @@ import {
   resendVerificationEmail,
   resetPassword,
   revokeRefreshToken,
+  updateUserProfile,
   verifyEmail,
 } from '../services/auth.service';
 import { AuthError } from '../services/auth.service';
@@ -94,4 +95,15 @@ export const me: RequestHandler = async (req, res) => {
   if (!req.authUser) throw new AuthError('Authentication is required.', 401, 'UNAUTHENTICATED');
   const user = await getAuthenticatedUser(req.authUser);
   res.status(200).json(user);
+};
+
+export const updateProfile: RequestHandler = async (req, res) => {
+  if (!req.authUser) throw new AuthError('Authentication is required.', 401, 'UNAUTHENTICATED');
+  const user = await updateUserProfile(req.authUser.userId, req.body);
+  res.status(200).json({
+    message: user.isVerified
+      ? 'Profile updated successfully.'
+      : 'Profile updated. Check your new email address to verify it before signing in again.',
+    user,
+  });
 };

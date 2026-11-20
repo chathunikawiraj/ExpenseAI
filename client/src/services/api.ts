@@ -2,6 +2,36 @@
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string,
+    readonly status?: number,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
+const apiErrorFromResponse = async (response: Response): Promise<ApiError> => {
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    return new ApiError('Request failed', undefined, response.status);
+  }
+
+  const details = body !== null && typeof body === 'object'
+    ? body as Record<string, unknown>
+    : {};
+
+  return new ApiError(
+    typeof details.error === 'string' ? details.error : `HTTP error ${response.status}`,
+    typeof details.code === 'string' ? details.code : undefined,
+    response.status,
+  );
+};
+
 let accessToken: string | null = localStorage.getItem('expenseai_access_token');
 
 export const setAccessToken = (token: string | null) => {
@@ -56,21 +86,20 @@ export async function apiRequest<T = any>(
           credentials: 'include',
         });
         if (!retryRes.ok) {
-          const err = await retryRes.json().catch(() => ({ error: 'Request failed' }));
-          throw new Error(err.error || `HTTP error ${retryRes.status}`);
+          throw await apiErrorFromResponse(retryRes);
         }
         return retryRes.json();
       } else {
         setAccessToken(null);
       }
-    } catch {
+    } catch (cause) {
       setAccessToken(null);
+      if (cause instanceof ApiError) throw cause;
     }
   }
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({ error: 'Request failed' }));
-    throw new Error(errorData.error || `HTTP error ${response.status}`);
+    throw await apiErrorFromResponse(response);
   }
 
   // Handle blob responses (e.g. CSV export)

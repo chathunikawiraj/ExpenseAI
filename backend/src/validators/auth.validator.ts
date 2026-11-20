@@ -44,6 +44,13 @@ export const loginSchema = z.object({
 });
 
 export const emailOnlySchema = z.object({ email: emailSchema });
+export const updateProfileSchema = z.object({
+  name: z.string().trim().min(2, "Name must contain at least 2 characters").max(100).optional(),
+  email: emailSchema.optional(),
+  currency: z.string().regex(/^[A-Za-z]{3}$/).optional(),
+  monthlyIncome: z.number().finite().nonnegative().optional(),
+}).refine((value) => Object.keys(value).length > 0, "Provide at least one profile field to update");
+export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
 export const verifyEmailSchema = z.object({ token: z.string().regex(/^[a-f0-9]{64}$/i) });
 export const resetPasswordSchema = z.object({
   token: z.string().regex(/^[a-f0-9]{64}$/i),

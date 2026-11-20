@@ -10,7 +10,7 @@ import {
   verifyRefreshToken,
 } from '../utils/jwt';
 import type { TokenPayload } from '../utils/jwt';
-import type { RegisterInput } from '../validators/auth.validator';
+import type { RegisterInput, UpdateProfileInput } from '../validators/auth.validator';
 
 const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const VERIFICATION_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
@@ -261,4 +261,57 @@ export async function getAuthenticatedUser(payload: TokenPayload): Promise<Publi
   if (user.status === 'SUSPENDED') throw new AuthError('This account has been suspended.', 403, 'ACCOUNT_SUSPENDED');
   if (!user.isVerified) throw new AuthError('Verify your email address to continue.', 403, 'EMAIL_NOT_VERIFIED');
   return toPublicUser(user);
+}
+
+export async function updateUserProfile(
+  userId: string,
+  input: UpdateProfileInput,
+): Promise<PublicUser> {
+  const currentUser = await prisma.user.findUnique({ where: { id: userId } });
+  if (!currentUser) throw new AuthError('User not found.', 404, 'USER_NOT_FOUND');
+
+  const emailChanged = input.email !== undefined && input.email !== currentUser.email;
+  const verificationToken = emailChanged ? createOpaqueToken() : '';
+  let updatedUser: User;
+
+  try {
+    updatedUser = await prisma.$transaction(async (transaction) => {
+      const updated = await transaction.user.update({
+        where: { id: userId },
+        data: {
+          ...(input.name !== undefined ? { name: input.name } : {}),
+          ...(input.email !== undefined ? { email: input.email } : {}),
+          ...(input.currency !== undefined ? { currency: input.currency.toUpperCase() } : {}),
+          ...(input.monthlyIncome !== undefined ? { monthlyIncome: input.monthlyIncome } : {}),
+          ...(emailChanged
+            ? {
+                isVerified: false,
+                verificationToken: hashToken(verificationToken),
+                verificationExpiresAt: new Date(Date.now() + VERIFICATION_TOKEN_TTL_MS),
+              }
+            : {}),
+        },
+      });
+
+      if (emailChanged) {
+        await transaction.refreshToken.updateMany({
+          where: { userId, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+      }
+
+      return updated;
+    });
+  } catch (error) {
+    if (isUniqueConstraintError(error)) {
+      throw new AuthError('An account with this email already exists.', 409, 'EMAIL_ALREADY_EXISTS');
+    }
+    throw error;
+  }
+
+  if (emailChanged) {
+    await sendVerificationEmail(updatedUser.email, createVerificationUrl(verificationToken));
+  }
+
+  return toPublicUser(updatedUser);
 }

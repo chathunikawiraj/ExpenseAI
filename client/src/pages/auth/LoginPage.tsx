@@ -3,6 +3,8 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useToast } from '../../components/common/Toast';
 import { Rocket, Lock, Mail, ArrowRight } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { authApi } from '../../services/apiService';
+import { ApiError } from '../../services/api';
 
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
@@ -12,6 +14,7 @@ export const LoginPage: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isResending, setIsResending] = useState(false);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,9 +29,30 @@ export const LoginPage: React.FC = () => {
       showToast('Signed in successfully. Welcome back!', 'success');
       navigate('/dashboard');
     } catch (cause) {
-      showToast(cause instanceof Error ? cause.message : 'Could not sign in.', 'error');
+      if (cause instanceof ApiError && cause.code === 'EMAIL_NOT_VERIFIED') {
+        showToast('Verify your email address, or request a new verification link below.', 'error');
+      } else {
+        showToast(cause instanceof Error ? cause.message : 'Could not sign in.', 'error');
+      }
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleResendVerification = async () => {
+    if (!email.trim()) {
+      showToast('Enter your email address above first.', 'error');
+      return;
+    }
+
+    setIsResending(true);
+    try {
+      const response = await authApi.resendVerificationEmail(email.trim());
+      showToast(response.message || 'If the account is unverified, a verification link has been sent.', 'info');
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not send a verification link.', 'error');
+    } finally {
+      setIsResending(false);
     }
   };
 
@@ -96,6 +120,20 @@ export const LoginPage: React.FC = () => {
             <ArrowRight className="w-4 h-4" />
           </button>
         </form>
+
+        <div className="w-full mt-4 rounded-2xl border border-purple-100 bg-purple-50 p-4 text-center">
+          <p className="text-xs text-navy-muted">
+            Didn't receive your verification email? Enter your email above and request a new link.
+          </p>
+          <button
+            type="button"
+            onClick={handleResendVerification}
+            disabled={isResending}
+            className="mt-3 text-xs font-bold text-primary hover:underline disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isResending ? 'Sending verification link...' : 'Resend verification link'}
+          </button>
+        </div>
 
         <p className="text-xs text-navy-muted text-center mt-6">
           Don't have an account?{' '}
