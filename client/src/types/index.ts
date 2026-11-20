@@ -41,8 +41,9 @@ export interface Income {
   amount: number;
   date: string;
   description?: string;
-  recurring: RecurringFrequency;
+  recurring?: RecurringFrequency;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface Expense {
@@ -53,12 +54,13 @@ export interface Expense {
   title: string;
   amount: number;
   date: string;
-  paymentMethod: PaymentMethod;
+  paymentMethod: PaymentMethod | null;
   description?: string;
-  recurring: RecurringFrequency;
+  recurring?: RecurringFrequency;
   receiptId?: string;
   receipt?: Receipt;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface Receipt {
