@@ -45,6 +45,8 @@ export const TransactionsPage: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>('all');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
   const [sortBy, setSortBy] = useState<'date' | 'amount'>('date');
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
   const [currentPage, setCurrentPage] = useState(1);
@@ -121,8 +123,8 @@ export const TransactionsPage: React.FC = () => {
           type: 'expense',
           category: cat?.name || 'Uncategorized',
           categoryColor: cat?.color || '#9275F5',
-          paymentMethod: e.paymentMethod,
-          description: e.description,
+          paymentMethod: e.paymentMethod ?? undefined,
+          description: e.description ?? undefined,
         });
       });
     }
@@ -138,7 +140,7 @@ export const TransactionsPage: React.FC = () => {
           category: 'Income',
           categoryColor: '#4BC9A2',
           paymentMethod: 'Direct Deposit',
-          description: i.description,
+          description: i.description ?? undefined,
         });
       });
     }
@@ -159,6 +161,14 @@ export const TransactionsPage: React.FC = () => {
       filtered = filtered.filter((t) => t.paymentMethod === selectedPaymentMethod);
     }
 
+    if (startDate) {
+      filtered = filtered.filter((transaction) => transaction.date.slice(0, 10) >= startDate);
+    }
+
+    if (endDate) {
+      filtered = filtered.filter((transaction) => transaction.date.slice(0, 10) <= endDate);
+    }
+
     // Sort
     filtered.sort((a, b) => {
       if (sortBy === 'date') {
@@ -170,7 +180,7 @@ export const TransactionsPage: React.FC = () => {
     });
 
     return filtered;
-  }, [activeTab, expensesList, incomesList, categories, searchTerm, selectedCategory, selectedPaymentMethod, sortBy, sortOrder]);
+  }, [activeTab, expensesList, incomesList, categories, searchTerm, selectedCategory, selectedPaymentMethod, startDate, endDate, sortBy, sortOrder]);
 
   const transactionSummary = useMemo(
     () =>
@@ -188,13 +198,17 @@ export const TransactionsPage: React.FC = () => {
     activeTab !== 'all' ||
     searchTerm.trim() !== '' ||
     selectedCategory !== 'all' ||
-    selectedPaymentMethod !== 'all';
+    selectedPaymentMethod !== 'all' ||
+    startDate !== '' ||
+    endDate !== '';
 
   const clearFilters = () => {
     setActiveTab('all');
     setSearchTerm('');
     setSelectedCategory('all');
     setSelectedPaymentMethod('all');
+    setStartDate('');
+    setEndDate('');
     setCurrentPage(1);
   };
 
@@ -340,7 +354,7 @@ export const TransactionsPage: React.FC = () => {
       const expense = expensesList.find((item) => item.id === transaction.id);
       if (expense) {
         setFormCategory(expense.categoryId);
-        setFormPaymentMethod(expense.paymentMethod);
+        setFormPaymentMethod(expense.paymentMethod ?? 'DEBIT_CARD');
       }
     }
 
@@ -514,6 +528,36 @@ export const TransactionsPage: React.FC = () => {
             <option value="BANK_TRANSFER">Bank Transfer</option>
             <option value="CASH">Cash</option>
           </select>
+
+          <label className="flex items-center gap-2 text-navy-muted">
+            <span>From</span>
+            <input
+              type="date"
+              aria-label="Filter from date"
+              value={startDate}
+              max={endDate || undefined}
+              onChange={(e) => {
+                setStartDate(e.target.value);
+                setCurrentPage(1);
+              }}
+              className="px-3 py-1.5 bg-[#F8F9FE] border border-gray-200 rounded-full text-xs text-navy focus:outline-none"
+            />
+          </label>
+
+          <label className="flex items-center gap-2 text-navy-muted">
+            <span>To</span>
+            <input
+              type="date"
+              aria-label="Filter to date"
+              value={endDate}
+              min={startDate || undefined}
+              onChange={(e) => {
+                setEndDate(e.target.value);
+                setCurrentPage(1);
+              }}
+              className="px-3 py-1.5 bg-[#F8F9FE] border border-gray-200 rounded-full text-xs text-navy focus:outline-none"
+            />
+          </label>
 
           {/* Sorting Order */}
           <div className="ml-auto flex items-center gap-2">

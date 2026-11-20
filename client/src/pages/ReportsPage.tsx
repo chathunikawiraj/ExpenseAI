@@ -124,7 +124,7 @@ export const ReportsPage: React.FC = () => {
 
     mockExpenses.filter((expense) => expense.date.slice(0, 10) >= startDate && expense.date.slice(0, 10) <= endDate).forEach((e) => {
       const cat = mockCategories.find((c) => c.id === e.categoryId);
-      rows.push([e.date.split('T')[0], 'Expense', cat?.name || 'General', e.amount.toFixed(2), e.paymentMethod, e.description || '']);
+      rows.push([e.date.split('T')[0], 'Expense', cat?.name || 'General', e.amount.toFixed(2), e.paymentMethod || 'N/A', e.description || '']);
     });
 
     const csvContent = [headers.map(sanitize).join(','), ...rows.map((row) => row.map(sanitize).join(','))].join('\r\n');
