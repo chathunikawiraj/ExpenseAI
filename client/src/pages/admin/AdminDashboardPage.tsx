@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { AppShell } from '../../components/layout/AppShell';
 import { Modal } from '../../components/common/Modal';
 import { useToast } from '../../components/common/Toast';
@@ -17,6 +17,9 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import { mockCategories } from '../../data/mockData';
+import { adminApi } from '../../services/apiService';
+import { getAccessToken } from '../../services/api';
+import { ResourceStatus } from '../../components/common/ResourceStatus';
 
 interface AdminUser {
   id: string;
@@ -76,44 +79,109 @@ export const AdminDashboardPage: React.FC = () => {
 
   // Default Categories List (FR-37)
   const [defaultCats, setDefaultCats] = useState(mockCategories);
+  const [stats, setStats] = useState({
+    totalUsers: 1248,
+    activeUsers: 984,
+    totalUploads: 3420,
+    ocrSuccessRate: 91.4,
+  });
+  const [isLoading, setIsLoading] = useState(Boolean(getAccessToken()));
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
   const [newCatName, setNewCatName] = useState('');
   const [newCatColor, setNewCatColor] = useState('#9275F5');
   const [isAddCatModalOpen, setIsAddCatModalOpen] = useState(false);
 
-  const toggleUserStatus = (userId: string) => {
-    setUsersList(
-      usersList.map((u) => {
-        if (u.id === userId) {
-          const nextStatus = u.status === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE';
-          showToast(`User ${u.name} is now ${nextStatus} (FR-36).`, 'info');
-          return { ...u, status: nextStatus };
-        }
-        return u;
-      })
-    );
+  const loadAdminData = useCallback(async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const [nextStats, users, categories] = await Promise.all([
+        adminApi.getStats(),
+        adminApi.getUsers(),
+        adminApi.getDefaultCategories(),
+      ]);
+      setStats(nextStats);
+      setUsersList(users.map((user: Omit<AdminUser, 'uploadsCount' | 'joinedDate'> & { createdAt: string }) => ({
+        ...user,
+        joinedDate: user.createdAt.slice(0, 10),
+        uploadsCount: 0,
+      })));
+      setDefaultCats(categories);
+    } catch (cause) {
+      setLoadError(cause instanceof Error ? cause.message : 'The server request failed.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!getAccessToken()) {
+      setIsLoading(false);
+      return;
+    }
+
+    void loadAdminData();
+  }, [loadAdminData]);
+
+  const toggleUserStatus = async (user: AdminUser) => {
+    const nextStatus = user.status === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE';
+    try {
+      if (getAccessToken()) await adminApi.updateUserStatus(user.id, nextStatus);
+      setUsersList((items) => items.map((item) => item.id === user.id ? { ...item, status: nextStatus } : item));
+      showToast(
+        getAccessToken()
+          ? `User ${user.name} is now ${nextStatus} (FR-36).`
+          : `Demo mode: ${user.name}'s status changed locally and was not saved.`,
+        'info'
+      );
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not update this user.', 'error');
+    }
   };
 
-  const deleteUser = (userId: string) => {
-    setUsersList(usersList.filter((u) => u.id !== userId));
-    showToast('User account successfully removed (FR-36).', 'success');
+  const deleteUser = async (userId: string) => {
+    try {
+      if (getAccessToken()) await adminApi.deleteUser(userId);
+      setUsersList((items) => items.filter((user) => user.id !== userId));
+      showToast(
+        getAccessToken() ? 'User account successfully removed (FR-36).' : 'Demo mode: user removed locally; no server changes were made.',
+        getAccessToken() ? 'success' : 'info'
+      );
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not delete this user.', 'error');
+    }
   };
 
-  const handleAddCategory = (e: React.FormEvent) => {
+  const handleAddCategory = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCatName.trim()) return;
 
-    const newCategory = {
-      id: `cat_${Date.now()}`,
-      name: newCatName.trim(),
-      isDefault: true,
-      color: newCatColor,
-      icon: 'Tag',
-    };
-
-    setDefaultCats([...defaultCats, newCategory]);
-    showToast(`Platform default category "${newCatName}" added (FR-37)!`, 'success');
-    setIsAddCatModalOpen(false);
-    setNewCatName('');
+    setIsSaving(true);
+    try {
+      const newCategory = getAccessToken()
+        ? await adminApi.createDefaultCategory({ name: newCatName.trim(), color: newCatColor })
+        : {
+            id: `cat_${Date.now()}`,
+            name: newCatName.trim(),
+            isDefault: true,
+            color: newCatColor,
+            icon: 'Tag',
+          };
+      setDefaultCats((items) => [...items, newCategory]);
+      showToast(
+        getAccessToken()
+          ? `Platform default category "${newCatName}" added (FR-37)!`
+          : 'Demo mode: category added locally and was not saved.',
+        getAccessToken() ? 'success' : 'info'
+      );
+      setIsAddCatModalOpen(false);
+      setNewCatName('');
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not add this category.', 'error');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const filteredUsers = usersList.filter(
@@ -143,13 +211,26 @@ export const AdminDashboardPage: React.FC = () => {
         </div>
       </div>
 
+      {getAccessToken() && (
+        <ResourceStatus
+          isLoading={isLoading}
+          error={loadError}
+          onRetry={() => void loadAdminData()}
+        />
+      )}
+      {!getAccessToken() && (
+        <div role="status" className="rounded-2xl bg-blue-50 px-4 py-3 text-xs text-blue-900">
+          Showing sample admin data. Changes are local and will not be saved to a server.
+        </div>
+      )}
+
       {/* Admin KPIs Grid (FR-35) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
         <div className="bg-white rounded-4xl p-6 shadow-comet flex items-center justify-between">
           <div>
             <span className="text-xs font-semibold text-navy-muted">Total Users</span>
-            <h3 className="text-2xl font-extrabold text-navy mt-1">1,248</h3>
-            <span className="text-[11px] font-bold text-emerald-600 mt-1 block">+12 this week</span>
+            <h3 className="text-2xl font-extrabold text-navy mt-1">{stats.totalUsers.toLocaleString()}</h3>
+            <span className="text-[11px] font-bold text-emerald-600 mt-1 block">Registered accounts</span>
           </div>
           <div className="w-12 h-12 rounded-3xl bg-primary-light text-primary flex items-center justify-center">
             <Users className="w-6 h-6 stroke-[2]" />
@@ -159,8 +240,10 @@ export const AdminDashboardPage: React.FC = () => {
         <div className="bg-card-blue rounded-4xl p-6 shadow-comet flex items-center justify-between">
           <div>
             <span className="text-xs font-semibold text-navy/70">Active Users</span>
-            <h3 className="text-2xl font-extrabold text-navy mt-1">984</h3>
-            <span className="text-[11px] font-bold text-navy/80 mt-1 block">78.8% engagement</span>
+            <h3 className="text-2xl font-extrabold text-navy mt-1">{stats.activeUsers.toLocaleString()}</h3>
+            <span className="text-[11px] font-bold text-navy/80 mt-1 block">
+              {stats.totalUsers ? `${((stats.activeUsers / stats.totalUsers) * 100).toFixed(1)}% active` : 'No users'}
+            </span>
           </div>
           <div className="w-12 h-12 rounded-3xl bg-white text-primary flex items-center justify-center shadow-sm">
             <UserCheck className="w-6 h-6 stroke-[2]" />
@@ -170,7 +253,7 @@ export const AdminDashboardPage: React.FC = () => {
         <div className="bg-card-lavender rounded-4xl p-6 shadow-comet flex items-center justify-between">
           <div>
             <span className="text-xs font-semibold text-navy/70">Receipt Uploads</span>
-            <h3 className="text-2xl font-extrabold text-navy mt-1">3,420</h3>
+            <h3 className="text-2xl font-extrabold text-navy mt-1">{stats.totalUploads.toLocaleString()}</h3>
             <span className="text-[11px] font-bold text-navy/80 mt-1 block">Total images stored</span>
           </div>
           <div className="w-12 h-12 rounded-3xl bg-white text-primary flex items-center justify-center shadow-sm">
@@ -181,7 +264,7 @@ export const AdminDashboardPage: React.FC = () => {
         <div className="bg-white rounded-4xl p-6 shadow-comet flex items-center justify-between">
           <div>
             <span className="text-xs font-semibold text-navy-muted">OCR Success Rate</span>
-            <h3 className="text-2xl font-extrabold text-emerald-600 mt-1">91.4%</h3>
+            <h3 className="text-2xl font-extrabold text-emerald-600 mt-1">{stats.ocrSuccessRate}%</h3>
             <span className="text-[11px] text-navy-muted mt-1 block">Target &gt; 85% (FR-19)</span>
           </div>
           <div className="w-12 h-12 rounded-3xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
@@ -297,7 +380,7 @@ export const AdminDashboardPage: React.FC = () => {
                     <td className="py-3.5 px-4 text-center">
                       <div className="flex items-center justify-center gap-2">
                         <button
-                          onClick={() => toggleUserStatus(user.id)}
+                          onClick={() => void toggleUserStatus(user)}
                           className={`px-3 py-1 rounded-full text-[11px] font-bold transition-colors ${
                             user.status === 'ACTIVE'
                               ? 'bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200'
@@ -317,6 +400,13 @@ export const AdminDashboardPage: React.FC = () => {
                     </td>
                   </tr>
                 ))}
+                {filteredUsers.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="py-8 text-center text-xs text-navy-muted">
+                      No users match this search.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -344,6 +434,11 @@ export const AdminDashboardPage: React.FC = () => {
                 </span>
               </div>
             ))}
+            {defaultCats.length === 0 && (
+              <p className="col-span-full py-8 text-center text-xs text-navy-muted">
+                No default categories are configured.
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -388,9 +483,10 @@ export const AdminDashboardPage: React.FC = () => {
             </button>
             <button
               type="submit"
-              className="px-6 py-2.5 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow"
+              disabled={isSaving}
+              className="px-6 py-2.5 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Save Default Category
+              {isSaving ? 'Saving...' : 'Save Default Category'}
             </button>
           </div>
         </form>

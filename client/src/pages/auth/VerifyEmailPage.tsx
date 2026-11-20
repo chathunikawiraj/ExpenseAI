@@ -1,23 +1,41 @@
 import React, { useState } from 'react';
-import { useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
+import { Rocket, MailCheck } from 'lucide-react';
+import { authApi } from '../../services/apiService';
 import { useToast } from '../../components/common/Toast';
-import { Rocket, MailCheck, ArrowRight, RefreshCw } from 'lucide-react';
 
 export const VerifyEmailPage: React.FC = () => {
-  const navigate = useNavigate();
-  const { showToast } = useToast();
   const [searchParams] = useSearchParams();
-  const email = searchParams.get('email') || 'your email';
+  const token = searchParams.get('token');
+  const email = searchParams.get('email') || '';
+  const { showToast } = useToast();
+  const [status, setStatus] = useState<'idle' | 'verifying' | 'verified' | 'error'>('idle');
+  const [isResending, setIsResending] = useState(false);
+  const [resendEmail, setResendEmail] = useState(email);
 
-  const [isVerifying, setIsVerifying] = useState(false);
+  const verifyEmail = async () => {
+    if (!token) return;
+    setStatus('verifying');
+    try {
+      await authApi.verifyEmail(token);
+      setStatus('verified');
+    } catch (cause) {
+      setStatus('error');
+      showToast(cause instanceof Error ? cause.message : 'Could not verify this email address.', 'error');
+    }
+  };
 
-  const handleSimulateVerify = () => {
-    setIsVerifying(true);
-    setTimeout(() => {
-      setIsVerifying(false);
-      showToast('Email verified successfully! You may now sign in (FR-02).', 'success');
-      navigate('/login');
-    }, 1200);
+  const resendVerification = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setIsResending(true);
+    try {
+      const response = await authApi.resendVerificationEmail(resendEmail.trim());
+      showToast(response.message, 'info');
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not send a verification link.', 'error');
+    } finally {
+      setIsResending(false);
+    }
   };
 
   return (
@@ -35,33 +53,52 @@ export const VerifyEmailPage: React.FC = () => {
 
         <h2 className="text-2xl font-black text-navy">Verify Your Email</h2>
         <p className="text-xs text-navy-muted mt-2 leading-relaxed">
-          We have dispatched a single-use verification link to <strong className="text-navy">{email}</strong> valid for 24 hours (FR-02).
+          {status === 'idle' && token && 'Click below to verify your email address.'}
+          {status === 'idle' && !token && 'Check your email for a verification link to activate your account.'}
+          {status === 'verifying' && 'Verifying your email address...'}
+          {status === 'verified' && 'Your email is verified. You can now sign in to ExpenseAI.'}
+          {status === 'error' && 'This link may have expired, already been used, or been replaced by a newer link. Request a new link below.'}
+          {resendEmail && <strong className="text-navy"> {resendEmail}</strong>}
         </p>
 
-        <div className="w-full mt-6 flex flex-col gap-3">
-          <button
-            onClick={handleSimulateVerify}
-            disabled={isVerifying}
-            className="w-full py-3 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow transition-all flex items-center justify-center gap-2"
-          >
-            {isVerifying ? (
-              <>
-                <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>Verifying Link...</span>
-              </>
-            ) : (
-              <>
-                <span>Simulate Clicking Email Link</span>
-                <ArrowRight className="w-4 h-4" />
-              </>
-            )}
-          </button>
-
+        <div className="w-full mt-6">
+          {token && status === 'idle' && (
+            <button
+              type="button"
+              onClick={verifyEmail}
+              className="w-full mb-3 py-3 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow transition-all"
+            >
+              Verify Email
+            </button>
+          )}
+          {status !== 'verified' && (
+            <form onSubmit={resendVerification} className="mb-3 text-left">
+              <label htmlFor="resend-verification-email" className="block text-xs font-bold text-navy mb-1">
+                Email address
+              </label>
+              <input
+                id="resend-verification-email"
+                type="email"
+                required
+                value={resendEmail}
+                onChange={(event) => setResendEmail(event.target.value)}
+                placeholder="name@domain.com"
+                className="w-full px-4 py-2.5 bg-[#F8F9FE] text-xs font-medium text-navy rounded-2xl border border-gray-200 focus:outline-none focus:border-primary"
+              />
+              <button
+                type="submit"
+                disabled={isResending}
+                className="w-full mt-3 py-3 bg-purple-50 hover:bg-purple-100 text-primary text-xs font-bold rounded-full transition-all disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isResending ? 'Sending...' : 'Resend verification link'}
+              </button>
+            </form>
+          )}
           <Link
             to="/login"
-            className="text-xs font-semibold text-navy-muted hover:text-navy pt-2"
+            className="w-full py-3 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow transition-all flex items-center justify-center"
           >
-            Already verified? Return to Sign In
+            Return to Sign In
           </Link>
         </div>
       </div>

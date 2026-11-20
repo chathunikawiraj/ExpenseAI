@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useToast } from '../../components/common/Toast';
 import { Rocket, Lock, Mail, User, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { authApi } from '../../services/apiService';
 
 export const RegisterPage: React.FC = () => {
   const navigate = useNavigate();
@@ -11,6 +12,7 @@ export const RegisterPage: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [currency, setCurrency] = useState('USD');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const validatePassword = (pass: string) => {
     const hasMinLength = pass.length >= 8;
@@ -19,15 +21,23 @@ export const RegisterPage: React.FC = () => {
     return hasMinLength && hasLetter && hasNumber;
   };
 
-  const handleRegister = (e: React.FormEvent) => {
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validatePassword(password)) {
       showToast('Password must be at least 8 characters with a letter and number (FR-01).', 'error');
       return;
     }
 
-    showToast('Registration successful! Verification email sent (FR-02).', 'success');
-    navigate('/verify-email?email=' + encodeURIComponent(email));
+    setIsSubmitting(true);
+    try {
+      const response = await authApi.register({ name: name.trim(), email: email.trim(), password, currency });
+      showToast(response.message || 'Account created. Check your email to verify your address.', 'success');
+      navigate(`/verify-email?email=${encodeURIComponent(email.trim())}`);
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not create your account.', 'error');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const hasLength = password.length >= 8;
@@ -126,9 +136,10 @@ export const RegisterPage: React.FC = () => {
 
           <button
             type="submit"
-            className="w-full mt-3 py-3 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow transition-all flex items-center justify-center gap-2"
+            disabled={isSubmitting}
+            className="w-full mt-3 py-3 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow transition-all flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            <span>Complete Registration</span>
+            <span>{isSubmitting ? 'Creating Account...' : 'Complete Registration'}</span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </form>

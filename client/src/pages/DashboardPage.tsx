@@ -10,7 +10,6 @@ import {
   mockExpenses,
   mockIncomes,
   mockCategories,
-  mockTrendChartData,
   mockInsights,
 } from '../data/mockData';
 
@@ -23,7 +22,7 @@ export const DashboardPage: React.FC = () => {
     <AppShell
       rightPanel={
         <RightPanelSummary
-          balance={balance > 0 ? balance : 1280.5}
+          balance={balance}
           dateStr="Monday, 07 September 2026"
           recentExpenses={mockExpenses}
         />
@@ -44,13 +43,12 @@ export const DashboardPage: React.FC = () => {
 
         {/* Card 2: Dispute Progress / Spending Trend Chart */}
         <SpendingTrendChart
-          data={mockTrendChartData}
-          incomeTotal={totalIncome}
-          expenseTotal={totalExpense}
+          incomes={mockIncomes}
+          expenses={mockExpenses}
         />
 
         {/* Card 3: Credit by Categories Card */}
-        <CategorySpendingCard categories={mockCategories} />
+        <CategorySpendingCard categories={mockCategories} expenses={mockExpenses} />
 
         {/* Card 4: Credit Reports / AI Insights Carousel */}
         <AiInsightCarouselCard insights={mockInsights} />

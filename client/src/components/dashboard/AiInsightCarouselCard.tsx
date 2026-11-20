@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { ChevronLeft, ChevronRight, Sparkles, RefreshCw } from 'lucide-react';
 import { InsightItem } from '../../types';
 
@@ -14,22 +15,29 @@ export const AiInsightCarouselCard: React.FC<AiInsightCarouselCardProps> = ({
   isLoading = false,
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
+  const reduceMotion = useReducedMotion();
+  const canNavigate = insights.length > 1;
+  const displayedIndex = insights.length ? currentIndex % insights.length : 0;
 
-  const currentInsight = insights[currentIndex] || {
+  const currentInsight = insights[displayedIndex] || {
     text: 'Analyze your receipts and monthly spending with smart AI suggestions.',
     source: 'RULE',
   };
 
   const handlePrev = () => {
-    setCurrentIndex((prev) => (prev === 0 ? insights.length - 1 : prev - 1));
+    if (canNavigate) {
+      setCurrentIndex((prev) => (prev - 1 + insights.length) % insights.length);
+    }
   };
 
   const handleNext = () => {
-    setCurrentIndex((prev) => (prev === insights.length - 1 ? 0 : prev + 1));
+    if (canNavigate) {
+      setCurrentIndex((prev) => (prev + 1) % insights.length);
+    }
   };
 
   return (
-    <div className="bg-white rounded-4xl p-7 shadow-comet flex flex-col items-center text-center justify-between relative">
+    <div className="card-hover bg-white rounded-4xl p-7 shadow-comet flex flex-col items-center text-center justify-between relative">
       <div className="w-full flex items-center justify-between mb-2">
         <div className="flex items-center gap-1.5">
           <Sparkles className="w-4 h-4 text-primary" />
@@ -52,8 +60,10 @@ export const AiInsightCarouselCard: React.FC<AiInsightCarouselCardProps> = ({
         {/* Prev Arrow */}
         <button
           onClick={handlePrev}
+          type="button"
+          disabled={!canNavigate}
           aria-label="Previous insight"
-          className="absolute left-0 w-8 h-8 rounded-full border border-gray-200 bg-white shadow-sm flex items-center justify-center text-navy-muted hover:text-navy hover:scale-105 transition-all z-10"
+          className="absolute left-0 w-8 h-8 rounded-full border border-gray-200 bg-white shadow-sm flex items-center justify-center text-navy-muted hover:text-navy hover:scale-105 transition-all z-10 disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <ChevronLeft className="w-4 h-4" />
         </button>
@@ -77,8 +87,10 @@ export const AiInsightCarouselCard: React.FC<AiInsightCarouselCardProps> = ({
         {/* Next Arrow */}
         <button
           onClick={handleNext}
+          type="button"
+          disabled={!canNavigate}
           aria-label="Next insight"
-          className="absolute right-0 w-8 h-8 rounded-full border border-gray-200 bg-white shadow-sm flex items-center justify-center text-navy-muted hover:text-navy hover:scale-105 transition-all z-10"
+          className="absolute right-0 w-8 h-8 rounded-full border border-gray-200 bg-white shadow-sm flex items-center justify-center text-navy-muted hover:text-navy hover:scale-105 transition-all z-10 disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <ChevronRight className="w-4 h-4" />
         </button>
@@ -86,9 +98,20 @@ export const AiInsightCarouselCard: React.FC<AiInsightCarouselCardProps> = ({
 
       {/* Insight Text */}
       <div className="w-full px-2">
-        <p className="text-xs text-navy font-medium line-clamp-3 leading-relaxed">
-          "{currentInsight.text}"
-        </p>
+        <div className="min-h-[3.5rem]" aria-live="polite">
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.p
+              key={displayedIndex}
+              initial={reduceMotion ? false : { opacity: 0, x: 8 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={reduceMotion ? undefined : { opacity: 0, x: -8 }}
+              transition={{ duration: reduceMotion ? 0 : 0.18 }}
+              className="text-xs text-navy font-medium line-clamp-3 leading-relaxed"
+            >
+              "{currentInsight.text}"
+            </motion.p>
+          </AnimatePresence>
+        </div>
         <div className="flex items-center justify-center gap-2 mt-2">
           <span className="text-[10px] text-navy-muted/70 bg-gray-50 border border-gray-200/80 px-2.5 py-0.5 rounded-full font-semibold">
             {currentInsight.source === 'AI' ? '✨ AI Analysis' : '📊 Rule-based'}
@@ -96,6 +119,25 @@ export const AiInsightCarouselCard: React.FC<AiInsightCarouselCardProps> = ({
           <span className="text-[10px] text-navy-muted/60">
             Informational only (FR-33)
           </span>
+        </div>
+        <div className="mt-3 flex items-center justify-center gap-1.5" aria-label="Insight position">
+          {insights.map((insight, index) => (
+            <button
+              key={insight.id}
+              type="button"
+              onClick={() => setCurrentIndex(index)}
+              aria-label={`Show insight ${index + 1}`}
+              aria-current={index === displayedIndex ? 'true' : undefined}
+              className={`h-1.5 rounded-full transition-all ${
+                index === displayedIndex ? 'w-5 bg-primary' : 'w-1.5 bg-gray-300 hover:bg-primary/60'
+              }`}
+            />
+          ))}
+          {insights.length > 0 && (
+            <span className="ml-1 text-[10px] text-navy-muted">
+              {displayedIndex + 1} / {insights.length}
+            </span>
+          )}
         </div>
       </div>
     </div>

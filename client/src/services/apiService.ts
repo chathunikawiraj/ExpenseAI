@@ -25,6 +25,20 @@ export const authApi = {
     setAccessToken(null);
   },
 
+  async verifyEmail(token: string) {
+    return apiRequest('/auth/verify-email', {
+      method: 'POST',
+      body: JSON.stringify({ token }),
+    });
+  },
+
+  async resendVerificationEmail(email: string) {
+    return apiRequest('/auth/resend-verification', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+  },
+
   async getMe(): Promise<User> {
     return apiRequest('/auth/me');
   },
@@ -63,9 +77,20 @@ export const transactionsApi = {
     );
   },
 
+  async getIncome(id: string) {
+    return apiRequest<Income>(`/incomes/${id}`);
+  },
+
   async createIncome(data: Partial<Income>) {
     return apiRequest<Income>('/incomes', {
       method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async updateIncome(id: string, data: Partial<Income>) {
+    return apiRequest<Income>(`/incomes/${id}`, {
+      method: 'PATCH',
       body: JSON.stringify(data),
     });
   },
@@ -88,6 +113,13 @@ export const transactionsApi = {
     });
   },
 
+  async updateExpense(id: string, data: Partial<Expense>) {
+    return apiRequest<Expense>(`/expenses/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
   async deleteExpense(id: string) {
     return apiRequest(`/expenses/${id}`, { method: 'DELETE' });
   },
@@ -100,6 +132,19 @@ export const transactionsApi = {
     return apiRequest('/categories', {
       method: 'POST',
       body: JSON.stringify(data),
+    });
+  },
+
+  async updateCategory(id: string, data: { name: string }): Promise<Category> {
+    return apiRequest(`/categories/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async deleteCategory(id: string): Promise<{ message: string }> {
+    return apiRequest(`/categories/${id}`, {
+      method: 'DELETE',
     });
   },
 };

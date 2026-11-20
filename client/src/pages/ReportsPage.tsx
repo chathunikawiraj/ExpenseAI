@@ -1,15 +1,12 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AppShell } from '../components/layout/AppShell';
 import { useToast } from '../components/common/Toast';
 import {
-  FileSpreadsheet,
   Printer,
-  Calendar,
   Download,
   ShieldCheck,
   ArrowDownLeft,
   ArrowUpRight,
-  Sparkles
 } from 'lucide-react';
 import {
   mockExpenses,
@@ -19,20 +16,83 @@ import {
   mockSavingsGoals,
 } from '../data/mockData';
 import { analyticsApi } from '../services/apiService';
+import { getAccessToken } from '../services/api';
+import { ResourceStatus } from '../components/common/ResourceStatus';
+import { useAuth } from '../context/AuthContext';
+
+interface MonthlyReport {
+  user?: { name?: string; email?: string; currency?: string };
+  totalIncome: number;
+  totalExpense: number;
+  netSavings: number;
+  budgets: typeof mockBudgets;
+  goals: typeof mockSavingsGoals;
+  expenses: Array<{ categoryId: string; amount: number }>;
+}
 
 export const ReportsPage: React.FC = () => {
   const { showToast } = useToast();
+  const { user } = useAuth();
   const [selectedMonth, setSelectedMonth] = useState('2026-09');
   const [startDate, setStartDate] = useState('2026-09-01');
   const [endDate, setEndDate] = useState('2026-09-30');
+  const [report, setReport] = useState<MonthlyReport | null>(null);
+  const [isLoading, setIsLoading] = useState(Boolean(getAccessToken()));
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  const totalIncome = mockIncomes.reduce((acc, curr) => acc + curr.amount, 0);
-  const totalExpense = mockExpenses.reduce((acc, curr) => acc + curr.amount, 0);
-  const netBalance = totalIncome - totalExpense;
+  useEffect(() => {
+    const monthStart = new Date(`${selectedMonth}-01T00:00:00`);
+    const lastDay = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0).getDate();
+    setStartDate(`${selectedMonth}-01`);
+    setEndDate(`${selectedMonth}-${String(lastDay).padStart(2, '0')}`);
+
+    if (!getAccessToken()) {
+      setReport(null);
+      setIsLoading(false);
+      setLoadError(null);
+      return;
+    }
+
+    let active = true;
+    setIsLoading(true);
+    setLoadError(null);
+    setReport(null);
+    analyticsApi.getMonthlyReport(selectedMonth)
+      .then((data: MonthlyReport) => {
+        if (active) setReport(data);
+      })
+      .catch((cause: unknown) => {
+        if (active) setLoadError(cause instanceof Error ? cause.message : 'The server request failed.');
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [selectedMonth]);
+
+  const totalIncome = report?.totalIncome ?? mockIncomes.reduce((acc, curr) => acc + curr.amount, 0);
+  const totalExpense = report?.totalExpense ?? mockExpenses.reduce((acc, curr) => acc + curr.amount, 0);
+  const netBalance = report?.netSavings ?? totalIncome - totalExpense;
+  const reportBudgets = report?.budgets ?? mockBudgets;
+  const reportGoals = report?.goals ?? mockSavingsGoals;
+  const reportExpenses = report?.expenses ?? mockExpenses;
+  const monthStart = new Date(`${selectedMonth}-01T00:00:00`);
+  const monthEnd = new Date(`${selectedMonth}-${endDate.slice(-2)}T00:00:00`);
+  const formatDate = (date: Date) => date.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
+  const currency = report?.user?.currency || user?.currency || 'USD';
+  const formatMoney = (amount: number) => new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(amount);
+  const getBudgetSpent = (budget: (typeof reportBudgets)[number]) =>
+    budget.spent ?? reportExpenses
+      .filter((expense) => !budget.categoryId || expense.categoryId === budget.categoryId)
+      .reduce((total, expense) => total + expense.amount, 0);
 
   // CSV Export with Formula Injection Neutralization (FR-28, FR-29)
   const handleExportCsv = async () => {
-    try {
+    if (getAccessToken()) {
+      try {
       const blob = await analyticsApi.exportCsv(startDate, endDate);
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -41,39 +101,44 @@ export const ReportsPage: React.FC = () => {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 0);
       showToast('Formula-safe CSV report downloaded from server (FR-28, FR-29)!', 'success');
-    } catch {
-      // Client-side fallback if server offline
-      const sanitize = (val: string | number) => {
-        const str = String(val).trim();
-        if (/^[=+\-@]/.test(str)) return `'${str}`;
-        return `"${str.replace(/"/g, '""')}"`;
-      };
-
-      const headers = ['Date', 'Type', 'Category/Source', 'Amount', 'Payment Method', 'Description'];
-      const rows: string[][] = [];
-
-      mockIncomes.forEach((i) => {
-        rows.push([i.date.split('T')[0], 'Income', i.source, i.amount.toFixed(2), 'Direct Deposit', i.description || '']);
-      });
-
-      mockExpenses.forEach((e) => {
-        const cat = mockCategories.find((c) => c.id === e.categoryId);
-        rows.push([e.date.split('T')[0], 'Expense', cat?.name || 'General', e.amount.toFixed(2), e.paymentMethod, e.description || '']);
-      });
-
-      const csvContent = [headers.map(sanitize).join(','), ...rows.map((row) => row.map(sanitize).join(','))].join('\r\n');
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.setAttribute('href', url);
-      link.setAttribute('download', `ExpenseAI_Financial_Report_${selectedMonth}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-
-      showToast('Formula-safe CSV report downloaded successfully (FR-28, FR-29)!', 'success');
+      } catch (cause) {
+        showToast(cause instanceof Error ? cause.message : 'Could not export the report.', 'error');
+      }
+      return;
     }
+
+    const sanitize = (val: string | number) => {
+      const str = String(val).trim();
+      if (/^[=+\-@]/.test(str)) return `'${str}`;
+      return `"${str.replace(/"/g, '""')}"`;
+    };
+
+    const headers = ['Date', 'Type', 'Category/Source', 'Amount', 'Payment Method', 'Description'];
+    const rows: string[][] = [];
+
+    mockIncomes.filter((income) => income.date.slice(0, 10) >= startDate && income.date.slice(0, 10) <= endDate).forEach((i) => {
+      rows.push([i.date.split('T')[0], 'Income', i.source, i.amount.toFixed(2), 'Direct Deposit', i.description || '']);
+    });
+
+    mockExpenses.filter((expense) => expense.date.slice(0, 10) >= startDate && expense.date.slice(0, 10) <= endDate).forEach((e) => {
+      const cat = mockCategories.find((c) => c.id === e.categoryId);
+      rows.push([e.date.split('T')[0], 'Expense', cat?.name || 'General', e.amount.toFixed(2), e.paymentMethod || 'N/A', e.description || '']);
+    });
+
+    const csvContent = [headers.map(sanitize).join(','), ...rows.map((row) => row.map(sanitize).join(','))].join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `ExpenseAI_Demo_Report_${selectedMonth}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+
+    showToast('Demo CSV exported. It contains sample data and was not sent to a server.', 'info');
   };
 
   const handlePrint = () => {
@@ -118,7 +183,7 @@ export const ReportsPage: React.FC = () => {
           <input
             type="month"
             value={selectedMonth}
-            onChange={(e) => setSelectedMonth(e.target.value)}
+            onChange={(e) => e.target.value && setSelectedMonth(e.target.value)}
             className="px-3 py-1.5 bg-[#F8F9FE] border border-gray-200 rounded-full text-xs font-semibold text-navy focus:outline-none"
           />
         </div>
@@ -128,6 +193,14 @@ export const ReportsPage: React.FC = () => {
           <span>Formula Injection Protected (FR-29)</span>
         </div>
       </div>
+
+      {getAccessToken() ? (
+        <ResourceStatus isLoading={isLoading} error={loadError} />
+      ) : (
+        <div role="status" className="rounded-2xl bg-blue-50 px-4 py-3 text-xs text-blue-900 print:hidden">
+          Showing sample report data. CSV exports use these fixtures and will not be saved to a server.
+        </div>
+      )}
 
       {/* Printable Report Document Body */}
       <div className="bg-white rounded-4xl p-8 sm:p-10 shadow-comet flex flex-col gap-8 print:shadow-none print:p-0 print:border-none">
@@ -141,14 +214,14 @@ export const ReportsPage: React.FC = () => {
               Monthly Financial Overview
             </h2>
             <p className="text-xs text-navy-muted mt-0.5">
-              Period: September 1, 2026 – September 30, 2026
+              Period: {formatDate(monthStart)} – {formatDate(monthEnd)}
             </p>
           </div>
 
           <div className="text-right">
             <span className="text-xs font-bold text-navy">Account Holder</span>
-            <p className="text-xs text-navy-muted">Jonathan W.</p>
-            <p className="text-[10px] text-navy-muted">ID: usr_01j789012345</p>
+            <p className="text-xs text-navy-muted">{report?.user?.name || user?.name || 'Demo User'}</p>
+            <p className="text-[10px] text-navy-muted">{report?.user?.email || user?.email || 'Sample account'}</p>
           </div>
         </div>
 
@@ -160,7 +233,7 @@ export const ReportsPage: React.FC = () => {
               Total Credits / Income
             </span>
             <span className="text-2xl font-black text-emerald-900 mt-2">
-              ${totalIncome.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              {formatMoney(totalIncome)}
             </span>
           </div>
 
@@ -170,7 +243,7 @@ export const ReportsPage: React.FC = () => {
               Total Debits / Expenses
             </span>
             <span className="text-2xl font-black text-rose-900 mt-2">
-              ${totalExpense.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              {formatMoney(totalExpense)}
             </span>
           </div>
 
@@ -179,7 +252,7 @@ export const ReportsPage: React.FC = () => {
               Net Surplus / Savings
             </span>
             <span className="text-2xl font-black text-primary mt-2">
-              +${netBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              {netBalance < 0 ? '-' : '+'}{formatMoney(Math.abs(netBalance))}
             </span>
           </div>
         </div>
@@ -198,19 +271,19 @@ export const ReportsPage: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {mockBudgets.map((b) => {
-                  const spent = b.spent || 0;
+                {reportBudgets.map((b) => {
+                  const spent = getBudgetSpent(b);
                   const variance = b.amount - spent;
                   return (
                     <tr key={b.id}>
                       <td className="py-3 px-4 font-bold text-navy">
-                        {b.category?.name || 'Overall Monthly Limit'}
+                        {b.category?.name || mockCategories.find((category) => category.id === b.categoryId)?.name || 'Overall Monthly Limit'}
                       </td>
-                      <td className="py-3 px-4 text-navy-muted">${b.amount.toFixed(2)}</td>
-                      <td className="py-3 px-4 font-semibold text-navy">${spent.toFixed(2)}</td>
+                      <td className="py-3 px-4 text-navy-muted">{formatMoney(b.amount)}</td>
+                      <td className="py-3 px-4 font-semibold text-navy">{formatMoney(spent)}</td>
                       <td className="py-3 px-4 text-right font-bold">
                         <span className={variance >= 0 ? 'text-emerald-600' : 'text-rose-600'}>
-                          {variance >= 0 ? '+' : ''}${variance.toFixed(2)}
+                          {variance >= 0 ? '+' : '-'}{formatMoney(Math.abs(variance))}
                         </span>
                       </td>
                     </tr>
@@ -225,11 +298,11 @@ export const ReportsPage: React.FC = () => {
         <div>
           <h3 className="text-sm font-bold text-navy mb-3">Savings Goals Progress</h3>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {mockSavingsGoals.map((g) => (
+            {reportGoals.map((g) => (
               <div key={g.id} className="p-4 bg-gray-50 rounded-2xl border border-gray-100 text-xs">
                 <span className="font-bold text-navy">{g.name}</span>
                 <p className="text-navy-muted mt-1">
-                  ${g.savedAmount.toLocaleString()} of ${g.targetAmount.toLocaleString()} ({Math.round((g.savedAmount / g.targetAmount) * 100)}%)
+                  {formatMoney(g.savedAmount)} of {formatMoney(g.targetAmount)} ({g.targetAmount ? Math.round((g.savedAmount / g.targetAmount) * 100) : 0}%)
                 </p>
               </div>
             ))}

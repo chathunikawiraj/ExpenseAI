@@ -1,7 +1,9 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { AppShell } from '../components/layout/AppShell';
 import { Modal } from '../components/common/Modal';
 import { CategoryBadge } from '../components/common/CategoryBadge';
+import { useToast } from '../components/common/Toast';
 import {
   Plus,
   Search,
@@ -10,11 +12,8 @@ import {
   ArrowUpRight,
   Trash2,
   Edit2,
-  Calendar,
-  CreditCard,
   ChevronLeft,
-  ChevronRight,
-  Receipt
+  ChevronRight
 } from 'lucide-react';
 import {
   mockExpenses,
@@ -22,12 +21,32 @@ import {
   mockCategories,
 } from '../data/mockData';
 import { Expense, Income, PaymentMethod } from '../types';
+import { getAccessToken } from '../services/api';
+import { transactionsApi } from '../services/apiService';
+import { ResourceStatus } from '../components/common/ResourceStatus';
+import { mockUser } from '../data/mockData';
+
+interface TransactionRow {
+  id: string;
+  title: string;
+  amount: number;
+  date: string;
+  type: 'expense' | 'income';
+  category?: string;
+  categoryColor?: string;
+  paymentMethod?: string;
+  description?: string;
+}
 
 export const TransactionsPage: React.FC = () => {
+  const { showToast } = useToast();
+  const reduceMotion = useReducedMotion();
   const [activeTab, setActiveTab] = useState<'all' | 'expenses' | 'incomes'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>('all');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
   const [sortBy, setSortBy] = useState<'date' | 'amount'>('date');
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
   const [currentPage, setCurrentPage] = useState(1);
@@ -36,11 +55,17 @@ export const TransactionsPage: React.FC = () => {
   // Local state for interactive CRUD
   const [expensesList, setExpensesList] = useState<Expense[]>(mockExpenses);
   const [incomesList, setIncomesList] = useState<Income[]>(mockIncomes);
+  const [categories, setCategories] = useState(mockCategories);
+  const [isLoading, setIsLoading] = useState(Boolean(getAccessToken()));
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Modals state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; type: 'expense' | 'income' } | null>(null);
+  const [editTarget, setEditTarget] = useState<{ id: string; type: 'expense' | 'income' } | null>(null);
 
   // Form state
   const [formType, setFormType] = useState<'expense' | 'income'>('expense');
@@ -51,23 +76,45 @@ export const TransactionsPage: React.FC = () => {
   const [formPaymentMethod, setFormPaymentMethod] = useState<PaymentMethod>('DEBIT_CARD');
   const [formDescription, setFormDescription] = useState('');
 
+  useEffect(() => {
+    if (!getAccessToken()) {
+      setIsLoading(false);
+      return;
+    }
+
+    let active = true;
+    Promise.all([
+      transactionsApi.getExpenses({ limit: 100 }),
+      transactionsApi.getIncomes({ limit: 100 }),
+      transactionsApi.getCategories(),
+    ])
+      .then(([expenses, incomes, nextCategories]) => {
+        if (!active) return;
+        setExpensesList(expenses.data);
+        setIncomesList(incomes.data);
+        setCategories(nextCategories);
+      })
+      .catch((cause: unknown) => {
+        if (active) {
+          setLoadError(cause instanceof Error ? cause.message : 'The server request failed.');
+        }
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   // Combined list with unified fields
   const unifiedTransactions = useMemo(() => {
-    const list: Array<{
-      id: string;
-      title: string;
-      amount: number;
-      date: string;
-      type: 'expense' | 'income';
-      category?: string;
-      categoryColor?: string;
-      paymentMethod?: string;
-      description?: string;
-    }> = [];
+    const list: TransactionRow[] = [];
 
     if (activeTab === 'all' || activeTab === 'expenses') {
       expensesList.forEach((e) => {
-        const cat = mockCategories.find((c) => c.id === e.categoryId) || e.category;
+        const cat = categories.find((c) => c.id === e.categoryId) || e.category;
         list.push({
           id: e.id,
           title: e.title,
@@ -76,8 +123,8 @@ export const TransactionsPage: React.FC = () => {
           type: 'expense',
           category: cat?.name || 'Uncategorized',
           categoryColor: cat?.color || '#9275F5',
-          paymentMethod: e.paymentMethod,
-          description: e.description,
+          paymentMethod: e.paymentMethod ?? undefined,
+          description: e.description ?? undefined,
         });
       });
     }
@@ -93,7 +140,7 @@ export const TransactionsPage: React.FC = () => {
           category: 'Income',
           categoryColor: '#4BC9A2',
           paymentMethod: 'Direct Deposit',
-          description: i.description,
+          description: i.description ?? undefined,
         });
       });
     }
@@ -114,6 +161,14 @@ export const TransactionsPage: React.FC = () => {
       filtered = filtered.filter((t) => t.paymentMethod === selectedPaymentMethod);
     }
 
+    if (startDate) {
+      filtered = filtered.filter((transaction) => transaction.date.slice(0, 10) >= startDate);
+    }
+
+    if (endDate) {
+      filtered = filtered.filter((transaction) => transaction.date.slice(0, 10) <= endDate);
+    }
+
     // Sort
     filtered.sort((a, b) => {
       if (sortBy === 'date') {
@@ -125,68 +180,208 @@ export const TransactionsPage: React.FC = () => {
     });
 
     return filtered;
-  }, [activeTab, expensesList, incomesList, searchTerm, selectedCategory, selectedPaymentMethod, sortBy, sortOrder]);
+  }, [activeTab, expensesList, incomesList, categories, searchTerm, selectedCategory, selectedPaymentMethod, startDate, endDate, sortBy, sortOrder]);
+
+  const transactionSummary = useMemo(
+    () =>
+      unifiedTransactions.reduce(
+        (summary, transaction) => {
+          summary.count += 1;
+          summary[transaction.type] += transaction.amount;
+          return summary;
+        },
+        { count: 0, expense: 0, income: 0 },
+      ),
+    [unifiedTransactions],
+  );
+  const hasActiveFilters =
+    activeTab !== 'all' ||
+    searchTerm.trim() !== '' ||
+    selectedCategory !== 'all' ||
+    selectedPaymentMethod !== 'all' ||
+    startDate !== '' ||
+    endDate !== '';
+
+  const clearFilters = () => {
+    setActiveTab('all');
+    setSearchTerm('');
+    setSelectedCategory('all');
+    setSelectedPaymentMethod('all');
+    setStartDate('');
+    setEndDate('');
+    setCurrentPage(1);
+  };
 
   // Pagination calculation
   const totalPages = Math.max(1, Math.ceil(unifiedTransactions.length / itemsPerPage));
+  const page = Math.min(currentPage, totalPages);
   const currentItems = unifiedTransactions.slice(
-    (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage
+    (page - 1) * itemsPerPage,
+    page * itemsPerPage
   );
 
-  const handleSaveTransaction = (e: React.FormEvent) => {
+  const handleSaveTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
     const parsedAmount = parseFloat(formAmount);
-    if (isNaN(parsedAmount) || parsedAmount <= 0) return;
-
-    if (formType === 'expense') {
-      const newExp: Expense = {
-        id: `exp_${Date.now()}`,
-        userId: 'usr_01j7890123456789abcdef01',
-        title: formTitle,
-        amount: parsedAmount,
-        date: formDate,
-        categoryId: formCategory,
-        category: mockCategories.find((c) => c.id === formCategory),
-        paymentMethod: formPaymentMethod,
-        description: formDescription,
-        recurring: 'NONE',
-        createdAt: new Date().toISOString(),
-      };
-      setExpensesList([newExp, ...expensesList]);
-    } else {
-      const newInc: Income = {
-        id: `inc_${Date.now()}`,
-        userId: 'usr_01j7890123456789abcdef01',
-        source: formTitle,
-        amount: parsedAmount,
-        date: formDate,
-        description: formDescription,
-        recurring: 'NONE',
-        createdAt: new Date().toISOString(),
-      };
-      setIncomesList([newInc, ...incomesList]);
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      showToast('Enter a transaction amount greater than zero.', 'error');
+      return;
     }
 
-    setIsAddModalOpen(false);
-    resetForm();
+    setIsSaving(true);
+    try {
+      if (formType === 'expense') {
+        const payload: Partial<Expense> = {
+          title: formTitle.trim(),
+          amount: parsedAmount,
+          date: formDate,
+          categoryId: formCategory,
+          paymentMethod: formPaymentMethod,
+          description: formDescription.trim(),
+          recurring: 'NONE',
+        };
+        const category = categories.find((item) => item.id === formCategory);
+
+        if (getAccessToken()) {
+          const saved = editTarget?.type === 'expense'
+            ? await transactionsApi.updateExpense(editTarget.id, payload)
+            : await transactionsApi.createExpense(payload);
+          const normalized = { ...saved, category: category || saved.category };
+          setExpensesList((items) =>
+            editTarget?.type === 'expense'
+              ? items.map((item) => (item.id === editTarget.id ? normalized : item))
+              : [normalized, ...items],
+          );
+        } else if (editTarget?.type === 'expense') {
+          setExpensesList((items) =>
+            items.map((item) => (item.id === editTarget.id ? { ...item, ...payload, category } : item)),
+          );
+        } else {
+          const newExpense: Expense = {
+            id: `exp_${Date.now()}`,
+            userId: mockUser.id,
+            title: formTitle.trim(),
+            amount: parsedAmount,
+            date: formDate,
+            categoryId: formCategory,
+            category,
+            paymentMethod: formPaymentMethod,
+            description: formDescription.trim(),
+            recurring: 'NONE',
+            createdAt: new Date().toISOString(),
+          };
+          setExpensesList((items) => [newExpense, ...items]);
+        }
+      } else {
+        const payload: Partial<Income> = {
+          source: formTitle.trim(),
+          amount: parsedAmount,
+          date: formDate,
+          description: formDescription.trim(),
+          recurring: 'NONE',
+        };
+
+        if (getAccessToken()) {
+          const saved = editTarget?.type === 'income'
+            ? await transactionsApi.updateIncome(editTarget.id, payload)
+            : await transactionsApi.createIncome(payload);
+          setIncomesList((items) =>
+            editTarget?.type === 'income'
+              ? items.map((item) => (item.id === editTarget.id ? saved : item))
+              : [saved, ...items],
+          );
+        } else if (editTarget?.type === 'income') {
+          setIncomesList((items) =>
+            items.map((item) => (item.id === editTarget.id ? { ...item, ...payload } : item)),
+          );
+        } else {
+          const newIncome: Income = {
+            id: `inc_${Date.now()}`,
+            userId: mockUser.id,
+            source: formTitle.trim(),
+            amount: parsedAmount,
+            date: formDate,
+            description: formDescription.trim(),
+            recurring: 'NONE',
+            createdAt: new Date().toISOString(),
+          };
+          setIncomesList((items) => [newIncome, ...items]);
+        }
+      }
+
+      setIsAddModalOpen(false);
+      showToast(`${editTarget ? 'Transaction updated' : 'Transaction added'} successfully.`, 'success');
+      if (!editTarget) {
+        setActiveTab('all');
+        setSearchTerm('');
+        setSelectedCategory('all');
+        setSelectedPaymentMethod('all');
+      }
+      setCurrentPage(1);
+      resetForm();
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not save this transaction.', 'error');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const resetForm = () => {
     setFormTitle('');
     setFormAmount('');
     setFormDescription('');
+    setFormDate(new Date().toISOString().split('T')[0]);
+    setFormCategory(categories[0]?.id || mockCategories[0].id);
+    setFormPaymentMethod('DEBIT_CARD');
+    setFormType('expense');
+    setEditTarget(null);
   };
 
-  const confirmDelete = () => {
-    if (!deleteTarget) return;
-    if (deleteTarget.type === 'expense') {
-      setExpensesList(expensesList.filter((e) => e.id !== deleteTarget.id));
-    } else {
-      setIncomesList(incomesList.filter((i) => i.id !== deleteTarget.id));
+  const openAddModal = () => {
+    resetForm();
+    setIsAddModalOpen(true);
+  };
+
+  const startEditing = (transaction: TransactionRow) => {
+    setEditTarget({ id: transaction.id, type: transaction.type });
+    setFormType(transaction.type);
+    setFormTitle(transaction.title);
+    setFormAmount(String(transaction.amount));
+    setFormDate(transaction.date.slice(0, 10));
+    setFormDescription(transaction.description || '');
+
+    if (transaction.type === 'expense') {
+      const expense = expensesList.find((item) => item.id === transaction.id);
+      if (expense) {
+        setFormCategory(expense.categoryId);
+        setFormPaymentMethod(expense.paymentMethod ?? 'DEBIT_CARD');
+      }
     }
-    setIsDeleteModalOpen(false);
-    setDeleteTarget(null);
+
+    setIsAddModalOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setIsDeleting(true);
+    try {
+      if (getAccessToken()) {
+        if (deleteTarget.type === 'expense') await transactionsApi.deleteExpense(deleteTarget.id);
+        else await transactionsApi.deleteIncome(deleteTarget.id);
+      }
+      if (deleteTarget.type === 'expense') {
+        setExpensesList((expenses) => expenses.filter((expense) => expense.id !== deleteTarget.id));
+      } else {
+        setIncomesList((incomes) => incomes.filter((income) => income.id !== deleteTarget.id));
+      }
+      setIsDeleteModalOpen(false);
+      setDeleteTarget(null);
+      showToast('Transaction deleted.', 'success');
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not delete this transaction.', 'error');
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   return (
@@ -202,13 +397,56 @@ export const TransactionsPage: React.FC = () => {
           </p>
         </div>
 
+        <ResourceStatus
+          isLoading={isLoading}
+          error={loadError}
+          onRetry={() => {
+            setLoadError(null);
+            setIsLoading(true);
+            Promise.all([
+              transactionsApi.getExpenses({ limit: 100 }),
+              transactionsApi.getIncomes({ limit: 100 }),
+              transactionsApi.getCategories(),
+            ])
+              .then(([expenses, incomes, nextCategories]) => {
+                setExpensesList(expenses.data);
+                setIncomesList(incomes.data);
+                setCategories(nextCategories);
+              })
+              .catch((cause: unknown) => setLoadError(cause instanceof Error ? cause.message : 'The server request failed.'))
+              .finally(() => setIsLoading(false));
+          }}
+        />
+
         <button
-          onClick={() => setIsAddModalOpen(true)}
+          onClick={openAddModal}
           className="px-6 py-3 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow transition-all flex items-center gap-2"
         >
           <Plus className="w-4 h-4 stroke-[2.5]" />
           <span>Add Transaction</span>
         </button>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="card-hover bg-white rounded-3xl p-5 shadow-comet border border-purple-100/60">
+          <p className="text-[11px] font-bold uppercase tracking-wide text-navy-muted">Matching records</p>
+          <p className="mt-2 text-2xl font-extrabold text-navy">{transactionSummary.count}</p>
+          <p className="mt-1 text-[11px] text-navy-muted">Updates with your current filters</p>
+        </div>
+        <div className="card-hover bg-white rounded-3xl p-5 shadow-comet border border-emerald-100/60">
+          <p className="text-[11px] font-bold uppercase tracking-wide text-navy-muted">Income</p>
+          <p className="mt-2 text-2xl font-extrabold text-emerald-600">
+            ${transactionSummary.income.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </p>
+          <p className="mt-1 text-[11px] text-navy-muted">In the current result set</p>
+        </div>
+        <div className="card-hover bg-white rounded-3xl p-5 shadow-comet border border-rose-100/60">
+          <p className="text-[11px] font-bold uppercase tracking-wide text-navy-muted">Expenses</p>
+          <p className="mt-2 text-2xl font-extrabold text-rose-500">
+            ${transactionSummary.expense.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </p>
+          <p className="mt-1 text-[11px] text-navy-muted">In the current result set</p>
+        </div>
       </div>
 
       {/* Tabs & Filters Bar */}
@@ -238,6 +476,7 @@ export const TransactionsPage: React.FC = () => {
           <div className="relative min-w-[240px]">
             <input
               type="text"
+              aria-label="Search transactions"
               value={searchTerm}
               onChange={(e) => {
                 setSearchTerm(e.target.value);
@@ -260,11 +499,14 @@ export const TransactionsPage: React.FC = () => {
           {/* Category Dropdown */}
           <select
             value={selectedCategory}
-            onChange={(e) => setSelectedCategory(e.target.value)}
+            onChange={(e) => {
+              setSelectedCategory(e.target.value);
+              setCurrentPage(1);
+            }}
             className="px-3 py-1.5 bg-[#F8F9FE] border border-gray-200 rounded-full text-xs font-semibold text-navy focus:outline-none"
           >
             <option value="all">All Categories</option>
-            {mockCategories.map((c) => (
+            {categories.map((c) => (
               <option key={c.id} value={c.name}>
                 {c.name}
               </option>
@@ -274,7 +516,10 @@ export const TransactionsPage: React.FC = () => {
           {/* Payment Method Dropdown */}
           <select
             value={selectedPaymentMethod}
-            onChange={(e) => setSelectedPaymentMethod(e.target.value)}
+            onChange={(e) => {
+              setSelectedPaymentMethod(e.target.value);
+              setCurrentPage(1);
+            }}
             className="px-3 py-1.5 bg-[#F8F9FE] border border-gray-200 rounded-full text-xs font-semibold text-navy focus:outline-none"
           >
             <option value="all">All Payment Methods</option>
@@ -283,6 +528,36 @@ export const TransactionsPage: React.FC = () => {
             <option value="BANK_TRANSFER">Bank Transfer</option>
             <option value="CASH">Cash</option>
           </select>
+
+          <label className="flex items-center gap-2 text-navy-muted">
+            <span>From</span>
+            <input
+              type="date"
+              aria-label="Filter from date"
+              value={startDate}
+              max={endDate || undefined}
+              onChange={(e) => {
+                setStartDate(e.target.value);
+                setCurrentPage(1);
+              }}
+              className="px-3 py-1.5 bg-[#F8F9FE] border border-gray-200 rounded-full text-xs text-navy focus:outline-none"
+            />
+          </label>
+
+          <label className="flex items-center gap-2 text-navy-muted">
+            <span>To</span>
+            <input
+              type="date"
+              aria-label="Filter to date"
+              value={endDate}
+              min={startDate || undefined}
+              onChange={(e) => {
+                setEndDate(e.target.value);
+                setCurrentPage(1);
+              }}
+              className="px-3 py-1.5 bg-[#F8F9FE] border border-gray-200 rounded-full text-xs text-navy focus:outline-none"
+            />
+          </label>
 
           {/* Sorting Order */}
           <div className="ml-auto flex items-center gap-2">
@@ -323,6 +598,21 @@ export const TransactionsPage: React.FC = () => {
             </button>
           </div>
         </div>
+
+        <div className="flex items-center justify-between gap-3 text-[11px] text-navy-muted">
+          <span>
+            Showing {unifiedTransactions.length} matching {unifiedTransactions.length === 1 ? 'transaction' : 'transactions'}
+          </span>
+          {hasActiveFilters && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="font-bold text-primary hover:text-primary-hover transition-colors"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Transactions Table / List Card */}
@@ -340,9 +630,17 @@ export const TransactionsPage: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50 text-xs">
-              {currentItems.length > 0 ? (
-                currentItems.map((tx) => (
-                  <tr key={tx.id} className="hover:bg-navy-light/40 transition-colors group">
+              <AnimatePresence initial={false}>
+                {currentItems.length > 0 ? (
+                  currentItems.map((tx) => (
+                    <motion.tr
+                      key={tx.id}
+                      initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={reduceMotion ? undefined : { opacity: 0, y: -4 }}
+                      transition={{ duration: reduceMotion ? 0 : 0.18 }}
+                      className="hover:bg-navy-light/40 transition-colors group"
+                    >
                     <td className="py-3.5 px-4 flex items-center gap-3">
                       <div
                         className={`w-9 h-9 rounded-2xl flex items-center justify-center flex-shrink-0 ${
@@ -398,26 +696,59 @@ export const TransactionsPage: React.FC = () => {
                     <td className="py-3.5 px-4 text-center">
                       <div className="flex items-center justify-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
                         <button
+                          onClick={() => startEditing(tx)}
+                          className="p-1.5 text-navy-muted hover:text-primary rounded-lg hover:bg-primary-light transition-colors"
+                          title="Edit transaction"
+                          aria-label={`Edit ${tx.title}`}
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
                           onClick={() => {
                             setDeleteTarget({ id: tx.id, type: tx.type });
                             setIsDeleteModalOpen(true);
                           }}
                           className="p-1.5 text-navy-muted hover:text-rose-500 rounded-lg hover:bg-rose-50 transition-colors"
                           title="Delete transaction"
+                          aria-label={`Delete ${tx.title}`}
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={6} className="text-center py-10 text-navy-muted">
-                    No matching transactions found.
-                  </td>
-                </tr>
-              )}
+                    </motion.tr>
+                  ))
+                ) : (
+                  <motion.tr
+                    key="empty"
+                    initial={reduceMotion ? false : { opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: reduceMotion ? 0 : 0.18 }}
+                  >
+                    <td colSpan={6} className="text-center py-10 text-navy-muted">
+                      <p>{hasActiveFilters ? 'No matching transactions found.' : 'No transactions yet.'}</p>
+                      {hasActiveFilters ? (
+                        <button
+                          type="button"
+                          onClick={clearFilters}
+                          className="mt-2 font-bold text-primary hover:text-primary-hover transition-colors"
+                        >
+                          Clear filters
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={openAddModal}
+                          className="mt-2 font-bold text-primary hover:text-primary-hover transition-colors"
+                        >
+                          Add your first transaction
+                        </button>
+                      )}
+                    </td>
+                  </motion.tr>
+                )}
+              </AnimatePresence>
             </tbody>
           </table>
         </div>
@@ -425,25 +756,25 @@ export const TransactionsPage: React.FC = () => {
         {/* Pagination (20 items per page according to FR-09, FR-11) */}
         <div className="flex items-center justify-between pt-4 mt-2 border-t border-gray-100 text-xs">
           <span className="text-navy-muted">
-            Showing {(currentPage - 1) * itemsPerPage + 1} to{' '}
-            {Math.min(currentPage * itemsPerPage, unifiedTransactions.length)} of{' '}
+            Showing {unifiedTransactions.length === 0 ? 0 : (page - 1) * itemsPerPage + 1} to{' '}
+            {Math.min(page * itemsPerPage, unifiedTransactions.length)} of{' '}
             {unifiedTransactions.length} records (20 / page)
           </span>
 
           <div className="flex items-center gap-2">
             <button
               onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-              disabled={currentPage === 1}
+              disabled={page === 1}
               className="p-1.5 rounded-full border border-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
             <span className="font-bold text-navy px-2">
-              Page {currentPage} of {totalPages}
+              Page {page} of {totalPages}
             </span>
             <button
               onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-              disabled={currentPage === totalPages}
+              disabled={page === totalPages}
               className="p-1.5 rounded-full border border-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <ChevronRight className="w-4 h-4" />
@@ -455,9 +786,12 @@ export const TransactionsPage: React.FC = () => {
       {/* Add Transaction Modal */}
       <Modal
         isOpen={isAddModalOpen}
-        onClose={() => setIsAddModalOpen(false)}
-        title="Add New Transaction"
-        subtitle="Record manual income or an expense item"
+        onClose={() => {
+          setIsAddModalOpen(false);
+          resetForm();
+        }}
+        title={editTarget ? 'Edit Transaction' : 'Add New Transaction'}
+        subtitle={editTarget ? 'Update the transaction details below' : 'Record manual income or an expense item'}
       >
         <form onSubmit={handleSaveTransaction} className="flex flex-col gap-4">
           {/* Transaction Type Radio Selector */}
@@ -465,6 +799,7 @@ export const TransactionsPage: React.FC = () => {
             <button
               type="button"
               onClick={() => setFormType('expense')}
+              disabled={Boolean(editTarget)}
               className={`py-2 text-xs font-bold rounded-xl transition-all ${
                 formType === 'expense'
                   ? 'bg-rose-500 text-white shadow-sm'
@@ -476,6 +811,7 @@ export const TransactionsPage: React.FC = () => {
             <button
               type="button"
               onClick={() => setFormType('income')}
+              disabled={Boolean(editTarget)}
               className={`py-2 text-xs font-bold rounded-xl transition-all ${
                 formType === 'income'
                   ? 'bg-emerald-500 text-white shadow-sm'
@@ -535,7 +871,7 @@ export const TransactionsPage: React.FC = () => {
                   onChange={(e) => setFormCategory(e.target.value)}
                   className="w-full px-3 py-2.5 bg-[#F8F9FE] text-xs font-medium text-navy rounded-2xl border border-gray-200 focus:outline-none focus:border-primary"
                 >
-                  {mockCategories.map((c) => (
+                  {categories.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
                     </option>
@@ -572,16 +908,20 @@ export const TransactionsPage: React.FC = () => {
           <div className="flex items-center justify-end gap-3 mt-4 pt-3 border-t border-gray-100">
             <button
               type="button"
-              onClick={() => setIsAddModalOpen(false)}
+              onClick={() => {
+                setIsAddModalOpen(false);
+                resetForm();
+              }}
               className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-navy text-xs font-bold rounded-full transition-colors"
             >
               Cancel
             </button>
             <button
               type="submit"
+              disabled={isSaving}
               className="px-6 py-2.5 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow transition-all"
             >
-              Save Transaction
+              {isSaving ? 'Saving...' : editTarget ? 'Update Transaction' : 'Save Transaction'}
             </button>
           </div>
         </form>
@@ -606,9 +946,10 @@ export const TransactionsPage: React.FC = () => {
           </button>
           <button
             onClick={confirmDelete}
+            disabled={isDeleting}
             className="px-6 py-2 bg-rose-500 hover:bg-rose-600 text-white text-xs font-bold rounded-full shadow-sm"
           >
-            Delete
+            {isDeleting ? 'Deleting...' : 'Delete'}
           </button>
         </div>
       </Modal>

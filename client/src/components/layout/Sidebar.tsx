@@ -6,17 +6,19 @@ import {
   Receipt,
   PieChart,
   BarChart3,
+  FileText,
   Sparkles,
   Settings,
   ShieldAlert,
-  Rocket
+  Rocket,
+  Bell
 } from 'lucide-react';
 
 interface SidebarProps {
   isAdmin?: boolean;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ isAdmin = true }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ isAdmin = false }) => {
   const location = useLocation();
 
   const navItems = [
@@ -24,8 +26,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ isAdmin = true }) => {
     { to: '/transactions', label: 'Transactions', icon: ArrowLeftRight },
     { to: '/receipts', label: 'Receipt Scanner', icon: Receipt },
     { to: '/budgets', label: 'Budgets & Goals', icon: PieChart },
-    { to: '/analytics', label: 'Analytics & Reports', icon: BarChart3 },
+    { to: '/analytics', label: 'Analytics', icon: BarChart3 },
+    { to: '/reports', label: 'Reports', icon: FileText },
     { to: '/insights', label: 'AI Insights', icon: Sparkles },
+    { to: '/notifications', label: 'Notifications', icon: Bell },
     { to: '/settings', label: 'Settings', icon: Settings },
   ];
 
@@ -80,8 +84,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ isAdmin = true }) => {
       </aside>
 
       {/* Mobile Bottom Navigation Bar */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-purple-100 py-2 px-4 z-50 flex items-center justify-around shadow-lg">
-        {navItems.slice(0, 5).map((item) => {
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-purple-100 py-2 px-2 z-50 overflow-x-auto shadow-lg">
+        <div className="flex w-max min-w-full items-center justify-start gap-1">
+        {navItems.map((item) => {
           const Icon = item.icon;
           const isActive = location.pathname.startsWith(item.to);
 
@@ -89,7 +94,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ isAdmin = true }) => {
             <NavLink
               key={item.to}
               to={item.to}
-              className={`p-2.5 rounded-2xl flex flex-col items-center transition-colors ${
+              title={item.label}
+              aria-label={item.label}
+              className={`min-w-[60px] px-2 py-2.5 rounded-2xl flex flex-col items-center transition-colors ${
                 isActive ? 'text-primary bg-primary-light' : 'text-navy-muted hover:text-navy'
               }`}
             >
@@ -98,6 +105,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isAdmin = true }) => {
             </NavLink>
           );
         })}
+        </div>
       </nav>
     </>
   );

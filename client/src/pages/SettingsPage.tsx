@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AppShell } from '../components/layout/AppShell';
 import { Modal } from '../components/common/Modal';
 import { useToast } from '../components/common/Toast';
@@ -14,15 +14,22 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import { mockUser } from '../data/mockData';
+import { authApi } from '../services/apiService';
+import { getAccessToken } from '../services/api';
+import { useAuth } from '../context/AuthContext';
+import { useNavigate } from 'react-router-dom';
 
 export const SettingsPage: React.FC = () => {
   const { showToast } = useToast();
+  const { user, updateUser, logout } = useAuth();
+  const navigate = useNavigate();
 
   // Profile fields (FR-07)
-  const [name, setName] = useState(mockUser.name);
-  const [email, setEmail] = useState(mockUser.email);
-  const [monthlyIncome, setMonthlyIncome] = useState(mockUser.monthlyIncome.toString());
-  const [currency, setCurrency] = useState(mockUser.currency);
+  const [name, setName] = useState(user?.name || mockUser.name);
+  const [email, setEmail] = useState(user?.email || mockUser.email);
+  const [monthlyIncome, setMonthlyIncome] = useState(String(user?.monthlyIncome ?? mockUser.monthlyIncome));
+  const [currency, setCurrency] = useState(user?.currency || mockUser.currency);
+  const [isSaving, setIsSaving] = useState(false);
 
   // Password fields
   const [currentPassword, setCurrentPassword] = useState('');
@@ -39,12 +46,37 @@ export const SettingsPage: React.FC = () => {
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [deleteConfirmationText, setDeleteConfirmationText] = useState('');
 
-  const handleSaveProfile = (e: React.FormEvent) => {
+  useEffect(() => {
+    if (!user) return;
+    setName(user.name);
+    setEmail(user.email);
+    setMonthlyIncome(String(user.monthlyIncome));
+    setCurrency(user.currency);
+  }, [user]);
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (email !== mockUser.email) {
-      showToast('Profile updated. A verification link has been sent to your new email (FR-07).', 'info');
-    } else {
-      showToast('Profile settings saved successfully!', 'success');
+    const income = Number(monthlyIncome);
+    if (!Number.isFinite(income) || income < 0) {
+      showToast('Monthly income must be a non-negative number.', 'error');
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const profile = { name: name.trim(), email: email.trim(), monthlyIncome: income, currency };
+      if (getAccessToken()) await authApi.updateProfile(profile);
+      updateUser(profile);
+      showToast(
+        email !== (user?.email || mockUser.email)
+          ? 'Profile updated. A verification link has been sent to your new email (FR-07).'
+          : 'Profile settings saved successfully!',
+        email !== (user?.email || mockUser.email) ? 'info' : 'success',
+      );
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not save your profile.', 'error');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -58,19 +90,30 @@ export const SettingsPage: React.FC = () => {
       showToast('Passwords do not match.', 'error');
       return;
     }
-    showToast('Password updated successfully!', 'success');
-    setCurrentPassword('');
-    setNewPassword('');
-    setConfirmPassword('');
+    showToast('Password changes are not connected to a backend endpoint yet.', 'error');
   };
 
-  const handleDeleteAccount = () => {
+  const handleDeleteAccount = async () => {
     if (deleteConfirmationText !== 'DELETE') {
       showToast('Type DELETE to confirm account removal.', 'error');
       return;
     }
-    showToast('Account scheduled for permanent erasure (FR-06).', 'info');
-    setIsDeleteModalOpen(false);
+
+    if (!getAccessToken()) {
+      showToast('Sign in with a connected account before deleting it.', 'error');
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      await authApi.deleteAccount();
+      await logout();
+      navigate('/');
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not delete the account.', 'error');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -154,9 +197,10 @@ export const SettingsPage: React.FC = () => {
 
             <button
               type="submit"
-              className="mt-3 self-end px-7 py-2.5 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow transition-all"
+              disabled={isSaving}
+              className="mt-3 self-end px-7 py-2.5 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow transition-all disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Save Profile Changes
+              {isSaving ? 'Saving...' : 'Save Profile Changes'}
             </button>
           </form>
         </div>
