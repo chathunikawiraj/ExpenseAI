@@ -2,6 +2,11 @@ import nodemailer from 'nodemailer';
 import { env } from '../config/env';
 
 const sendEmail = async (to: string, subject: string, message: string, url: string): Promise<void> => {
+  if (env.NODE_ENV === 'test') {
+    console.info(`[ExpenseAI Email - test] ${subject} for ${to}: ${url}`);
+    return;
+  }
+
   if (!env.SMTP_HOST) {
     if (env.NODE_ENV === 'production') {
       throw new Error('Email delivery is not configured.');

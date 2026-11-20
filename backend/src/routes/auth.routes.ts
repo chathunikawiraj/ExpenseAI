@@ -9,6 +9,7 @@ import {
   refresh,
   register,
   resendVerification,
+  updateProfile,
   verify,
 } from "../controllers/auth.controller";
 import { authenticate } from "../middleware/auth.middleware";
@@ -18,6 +19,7 @@ import {
   loginSchema,
   registerSchema,
   resetPasswordSchema,
+  updateProfileSchema,
   verifyEmailSchema,
 } from "../validators/auth.validator";
 import rateLimit from "express-rate-limit";
@@ -43,5 +45,6 @@ router.post("/logout", logout);
 router.post("/forgot-password", authLimiter, validateBody(emailOnlySchema), forgotPassword);
 router.post("/reset-password", authLimiter, validateBody(resetPasswordSchema), completePasswordReset);
 router.get("/me", authenticate, me);
+router.put("/profile", authenticate, validateBody(updateProfileSchema), updateProfile);
 
 export default router;

@@ -147,7 +147,7 @@ Interactive Swagger/OpenAPI documentation is available at:
 👉 **[http://localhost:5000/api/v1/docs](http://localhost:5000/api/v1/docs)**
 
 ### Summary of REST Endpoints (`/api/v1`)
-- **Authentication**: `POST /auth/register`, `POST /auth/login`, `POST /auth/logout`, `POST /auth/refresh`, `POST /auth/forgot-password`, `POST /auth/reset-password`, `GET /auth/me`, `PUT /auth/profile`, `DELETE /auth/account`.
+- **Authentication**: `POST /auth/register`, `POST /auth/verify-email`, `POST /auth/resend-verification`, `POST /auth/login`, `POST /auth/logout`, `POST /auth/refresh`, `POST /auth/forgot-password`, `POST /auth/reset-password`, `GET /auth/me`, `PUT /auth/profile`, `DELETE /auth/account`.
 - **Transactions**: `GET/POST /incomes`, `PUT/DELETE /incomes/:id`, `GET/POST /expenses`, `PUT/DELETE /expenses/:id`, `GET/POST /categories`.
 - **Budgets & Goals**: `GET/POST /budgets`, `DELETE /budgets/:id`, `GET/POST/PUT/DELETE /goals`.
 - **Receipts & OCR**: `POST /receipts` (Multipart upload with magic-byte validation & Tesseract OCR), `DELETE /receipts/:id`.

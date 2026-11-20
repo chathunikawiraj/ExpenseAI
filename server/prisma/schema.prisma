@@ -12,11 +12,15 @@ datasource db {
 enum Role {
   USER
   ADMIN
+
+  @@map("UserRole")
 }
 
 enum UserStatus {
   ACTIVE
   SUSPENDED
+
+  @@map("AccountStatus")
 }
 
 enum PaymentMethod {
