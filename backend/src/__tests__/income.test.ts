@@ -84,6 +84,30 @@ test('income CRUD is authenticated and scoped to the owning user', async () => {
     assert.ok(listed.data.some((income) => income.id === created.id));
     assert.equal(listed.meta.page, 1);
 
+    const searchResponse = await fetch(
+      `${baseUrl}?search=${encodeURIComponent('monthly')}&startDate=2026-11-01&endDate=2026-11-30&sortBy=amount&order=desc&page=1&limit=10`,
+      { headers }
+    );
+    assert.equal(searchResponse.status, 200);
+    const searched = await searchResponse.json() as {
+      data: Array<{ id: string }>;
+      meta: { total: number; page: number; limit: number };
+    };
+    assert.ok(searched.data.some((income) => income.id === created.id));
+    assert.equal(searched.meta.total, 1);
+
+    const invalidRangeResponse = await fetch(
+      `${baseUrl}?startDate=2026-12-01&endDate=2026-11-01`,
+      { headers }
+    );
+    assert.equal(invalidRangeResponse.status, 400);
+
+    const invalidSortResponse = await fetch(`${baseUrl}?sortBy=description`, { headers });
+    assert.equal(invalidSortResponse.status, 400);
+
+    const invalidDateResponse = await fetch(`${baseUrl}?startDate=2026-02-31`, { headers });
+    assert.equal(invalidDateResponse.status, 400);
+
     const readResponse = await fetch(`${baseUrl}/${created.id}`, { headers });
     assert.equal(readResponse.status, 200);
     assert.equal((await readResponse.json() as { id: string }).id, created.id);

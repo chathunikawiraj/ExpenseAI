@@ -61,10 +61,12 @@ export const getExpenses = async (userId: string, query: ExpenseQuery) => {
       : {}),
   };
   const skip = (query.page - 1) * query.limit;
-  const orderBy: Prisma.ExpenseOrderByWithRelationInput | Prisma.ExpenseOrderByWithRelationInput[] =
+  const orderBy: Prisma.ExpenseOrderByWithRelationInput =
     query.sortBy === 'amount'
       ? { amount: query.sortOrder }
-      : [{ date: query.sortOrder }, { createdAt: query.sortOrder }];
+      : query.sortBy === 'createdAt'
+        ? { createdAt: query.sortOrder }
+        : { date: query.sortOrder };
 
   const [expenses, total] = await Promise.all([
     prisma.expense.findMany({
