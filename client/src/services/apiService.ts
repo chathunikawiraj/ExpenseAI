@@ -1,5 +1,42 @@
 import { apiRequest, setAccessToken } from './api';
-import { User, Expense, Income, Category, Budget, SavingsGoal, InsightItem, NotificationItem } from '../types';
+import { User, Expense, Income, Category, Budget, SavingsGoal, InsightItem, NotificationItem, UnifiedTransaction, DashboardSummary, CategoryBreakdown, AnalyticsTrends } from '../types';
+
+interface PageMeta {
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+interface ListResponse<T> {
+  data: T[];
+  meta: PageMeta;
+}
+
+interface TransactionQuery {
+  type?: 'all' | 'income' | 'expense';
+  startDate?: string;
+  endDate?: string;
+  search?: string;
+  categoryId?: string;
+  paymentMethod?: string;
+  page?: number;
+  limit?: number;
+  sortBy?: 'date' | 'amount' | 'createdAt';
+  order?: 'asc' | 'desc';
+  sortOrder?: 'asc' | 'desc';
+}
+
+const queryString = (params: object): string => {
+  const searchParams = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (typeof value === 'string' || typeof value === 'number') {
+      searchParams.set(key, String(value));
+    }
+  });
+  const query = searchParams.toString();
+  return query ? `?${query}` : '';
+};
 
 export const authApi = {
   async register(data: { name: string; email: string; password: string; currency?: string; monthlyIncome?: number }) {
@@ -25,6 +62,20 @@ export const authApi = {
     setAccessToken(null);
   },
 
+  async verifyEmail(token: string) {
+    return apiRequest('/auth/verify-email', {
+      method: 'POST',
+      body: JSON.stringify({ token }),
+    });
+  },
+
+  async resendVerificationEmail(email: string) {
+    return apiRequest('/auth/resend-verification', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+  },
+
   async getMe(): Promise<User> {
     return apiRequest('/auth/me');
   },
@@ -37,7 +88,17 @@ export const authApi = {
   },
 
   async deleteAccount() {
-    return apiRequest('/auth/account', { method: 'DELETE' });
+    return apiRequest('/auth/account', {
+      method: 'DELETE',
+      body: JSON.stringify({ confirmation: 'DELETE' }),
+    });
+  },
+
+  async changePassword(currentPassword: string, newPassword: string) {
+    return apiRequest('/auth/password', {
+      method: 'PUT',
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
   },
 
   async forgotPassword(email: string) {
@@ -56,16 +117,30 @@ export const authApi = {
 };
 
 export const transactionsApi = {
-  async getIncomes(params: { startDate?: string; endDate?: string; source?: string; page?: number; limit?: number } = {}) {
-    const q = new URLSearchParams(params as any).toString();
-    return apiRequest<{ data: Income[]; meta: { total: number; page: number; limit: number; totalPages: number } }>(
-      `/incomes?${q}`
-    );
+  async getTransactions(
+    params: TransactionQuery = {},
+  ): Promise<ListResponse<UnifiedTransaction>> {
+    return apiRequest<ListResponse<UnifiedTransaction>>(`/transactions${queryString(params)}`);
   },
 
-  async createIncome(data: Partial<Income>) {
+  async getIncomes(params: TransactionQuery & { source?: string } = {}): Promise<ListResponse<Income>> {
+    return apiRequest<ListResponse<Income>>(`/incomes${queryString(params)}`);
+  },
+
+  async getIncome(id: string) {
+    return apiRequest<Income>(`/incomes/${id}`);
+  },
+
+  async createIncome(data: Pick<Income, 'source' | 'amount' | 'date'> & { description?: string }) {
     return apiRequest<Income>('/incomes', {
       method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async updateIncome(id: string, data: Partial<Pick<Income, 'source' | 'amount' | 'date' | 'description'>>) {
+    return apiRequest<Income>(`/incomes/${id}`, {
+      method: 'PATCH',
       body: JSON.stringify(data),
     });
   },
@@ -74,16 +149,29 @@ export const transactionsApi = {
     return apiRequest(`/incomes/${id}`, { method: 'DELETE' });
   },
 
-  async getExpenses(params: { search?: string; categoryId?: string; paymentMethod?: string; startDate?: string; endDate?: string; sortBy?: string; sortOrder?: string; page?: number; limit?: number } = {}) {
-    const q = new URLSearchParams(params as any).toString();
-    return apiRequest<{ data: Expense[]; meta: { total: number; page: number; limit: number; totalPages: number } }>(
-      `/expenses?${q}`
-    );
+  async getExpenses(
+    params: TransactionQuery & { categoryId?: string; paymentMethod?: string } = {},
+  ): Promise<ListResponse<Expense>> {
+    return apiRequest<ListResponse<Expense>>(`/expenses${queryString(params)}`);
   },
 
-  async createExpense(data: Partial<Expense>) {
+  async getExpense(id: string) {
+    return apiRequest<Expense>(`/expenses/${id}`);
+  },
+
+  async createExpense(data: Pick<Expense, 'title' | 'amount' | 'date' | 'categoryId'> & {
+    paymentMethod?: Expense['paymentMethod'];
+    description?: string;
+  }) {
     return apiRequest<Expense>('/expenses', {
       method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async updateExpense(id: string, data: Partial<Pick<Expense, 'title' | 'amount' | 'date' | 'categoryId' | 'paymentMethod' | 'description'>>) {
+    return apiRequest<Expense>(`/expenses/${id}`, {
+      method: 'PUT',
       body: JSON.stringify(data),
     });
   },
@@ -93,13 +181,29 @@ export const transactionsApi = {
   },
 
   async getCategories(): Promise<Category[]> {
-    return apiRequest('/categories');
+    const response = await apiRequest<{ data: { categories: Category[] } }>('/categories');
+    return response.data.categories;
   },
 
-  async createCategory(data: { name: string; color?: string; icon?: string }): Promise<Category> {
-    return apiRequest('/categories', {
+  async createCategory(data: { name: string }): Promise<Category> {
+    const response = await apiRequest<{ data: { category: Category } }>('/categories', {
       method: 'POST',
       body: JSON.stringify(data),
+    });
+    return response.data.category;
+  },
+
+  async updateCategory(id: string, data: { name: string }): Promise<Category> {
+    const response = await apiRequest<{ data: { category: Category } }>(`/categories/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+    return response.data.category;
+  },
+
+  async deleteCategory(id: string): Promise<{ message: string }> {
+    return apiRequest<{ message: string }>(`/categories/${id}`, {
+      method: 'DELETE',
     });
   },
 };
@@ -150,6 +254,21 @@ export const budgetsApi = {
   async markNotificationRead(id: string) {
     return apiRequest(`/notifications/${id}/read`, { method: 'PATCH' });
   },
+
+  async markAllNotificationsRead() {
+    return apiRequest('/notifications/read-all', { method: 'PATCH' });
+  },
+
+  async deleteNotification(id: string) {
+    return apiRequest(`/notifications/${id}`, { method: 'DELETE' });
+  },
+
+  async contributeToGoal(id: string, data: { amount: number; date?: string; note?: string }): Promise<SavingsGoal> {
+    return apiRequest(`/goals/${id}/contributions`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
 };
 
 export const receiptsApi = {
@@ -175,6 +294,13 @@ export const receiptsApi = {
   async deleteReceipt(id: string) {
     return apiRequest(`/receipts/${id}`, { method: 'DELETE' });
   },
+
+  async associateReceipt(id: string, expenseId: string) {
+    return apiRequest(`/receipts/${id}/associate`, {
+      method: 'PATCH',
+      body: JSON.stringify({ expenseId }),
+    });
+  },
 };
 
 export const insightsApi = {
@@ -191,13 +317,21 @@ export const insightsApi = {
 };
 
 export const analyticsApi = {
-  async getSummary(month?: string) {
+  async getSummary(month?: string): Promise<DashboardSummary> {
     const q = month ? `?month=${month}` : '';
     return apiRequest(`/analytics/summary${q}`);
   },
 
-  async getTrends() {
-    return apiRequest('/analytics/trends');
+  async getTrends(months = 6): Promise<AnalyticsTrends> {
+    return apiRequest(`/analytics/trends?months=${months}`);
+  },
+
+  async getCategoryBreakdown(startDate?: string, endDate?: string): Promise<CategoryBreakdown> {
+    const params = new URLSearchParams();
+    if (startDate) params.set('startDate', startDate);
+    if (endDate) params.set('endDate', endDate);
+    const query = params.toString();
+    return apiRequest(`/analytics/category-breakdown${query ? `?${query}` : ''}`);
   },
 
   async getMonthlyReport(month: string) {

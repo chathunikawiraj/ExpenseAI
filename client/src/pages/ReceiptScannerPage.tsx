@@ -17,7 +17,8 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { mockCategories } from '../data/mockData';
-import { receiptsApi } from '../services/apiService';
+import { receiptsApi, transactionsApi } from '../services/apiService';
+import { getAccessToken } from '../services/api';
 
 export const ReceiptScannerPage: React.FC = () => {
   const { showToast } = useToast();
@@ -35,6 +36,8 @@ export const ReceiptScannerPage: React.FC = () => {
   const [extractedDate, setExtractedDate] = useState('');
   const [extractedCategory, setExtractedCategory] = useState(mockCategories[6].id); // Shopping & Tech default
   const [ocrSuccess, setOcrSuccess] = useState(true);
+  const [receiptId, setReceiptId] = useState<string | null>(null);
+  const [isSavingExpense, setIsSavingExpense] = useState(false);
 
   // Magic byte validation helper
   const validateMagicBytes = async (file: File): Promise<boolean> => {
@@ -89,6 +92,12 @@ export const ReceiptScannerPage: React.FC = () => {
 
     setSelectedFile(file);
     setPreviewUrl(URL.createObjectURL(file));
+    setReceiptId(null);
+
+    if (!getAccessToken()) {
+      runOcrSimulation(file.name);
+      return;
+    }
 
     // Execute real OCR API pipeline with progress
     setIsScanning(true);
@@ -96,25 +105,22 @@ export const ReceiptScannerPage: React.FC = () => {
 
     try {
       setScanProgress(60);
-      // Attempt backend OCR upload
-      const res = await receiptsApi.uploadAndOcr(file).catch(() => null);
+      const res = await receiptsApi.uploadAndOcr(file);
       setScanProgress(90);
-
-      if (res && res.extracted) {
-        setOcrSuccess(res.extracted.success);
-        setExtractedVendor(res.extracted.vendor || 'Apple Fifth Ave');
-        setExtractedAmount(res.extracted.amount ? res.extracted.amount.toString() : '1280.50');
-        setExtractedDate(res.extracted.date || new Date().toISOString().substring(0, 10));
-        setExtractedCategory(res.extracted.suggestedCategoryId || mockCategories[6].id);
-        showToast('Receipt scanned & parsed successfully via Tesseract OCR (FR-19)!', 'success');
-      } else {
-        // Graceful fallback to client-side heuristic parser
-        runOcrSimulation(file.name);
-        return;
-      }
-    } catch {
-      runOcrSimulation(file.name);
-      return;
+      setReceiptId(res.receiptId);
+      setOcrSuccess(res.extracted.success);
+      setExtractedVendor(res.extracted.vendor || '');
+      setExtractedAmount(res.extracted.amount?.toString() || '');
+      setExtractedDate(res.extracted.date || new Date().toISOString().substring(0, 10));
+      setExtractedCategory(res.extracted.suggestedCategoryId || mockCategories[6].id);
+      showToast('Receipt scanned by the server. Review the extracted fields.', 'success');
+    } catch (cause) {
+      setOcrSuccess(false);
+      setExtractedVendor('');
+      setExtractedAmount('');
+      setExtractedDate(new Date().toISOString().substring(0, 10));
+      setExtractedCategory(mockCategories[6].id);
+      showToast(cause instanceof Error ? cause.message : 'Receipt scanning failed. Enter the details manually.', 'error');
     } finally {
       setIsScanning(false);
       setScanProgress(100);
@@ -147,7 +153,7 @@ export const ReceiptScannerPage: React.FC = () => {
         setExtractedAmount('1280.50');
         setExtractedDate('2026-09-07');
         setExtractedCategory(mockCategories[6].id);
-        showToast('Receipt parsed successfully via OCR!', 'success');
+        showToast('Demo OCR simulation completed; no backend request was made.', 'info');
       }
       setIsReviewModalOpen(true);
     }, 1800);
@@ -159,12 +165,42 @@ export const ReceiptScannerPage: React.FC = () => {
     };
   };
 
-  const handleSaveExpense = (e: React.FormEvent) => {
+  const handleSaveExpense = async (e: React.FormEvent) => {
     e.preventDefault();
-    showToast(`Expense for "${extractedVendor}" ($${extractedAmount}) saved!`, 'success');
-    setIsReviewModalOpen(false);
-    setSelectedFile(null);
-    setPreviewUrl(null);
+    if (!getAccessToken()) {
+      showToast('Sign in with a connected backend to save this expense.', 'info');
+      return;
+    }
+
+    const amount = Number(extractedAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      showToast('Enter a valid receipt amount before saving.', 'error');
+      return;
+    }
+
+    setIsSavingExpense(true);
+    try {
+      const expense = await transactionsApi.createExpense({
+        title: extractedVendor.trim(),
+        amount,
+        date: extractedDate,
+        categoryId: extractedCategory,
+        paymentMethod: 'OTHER',
+        description: selectedFile ? `Receipt: ${selectedFile.name}` : undefined,
+      });
+      if (receiptId) {
+        await receiptsApi.associateReceipt(receiptId, expense.id);
+      }
+      showToast(`Expense for "${extractedVendor}" ($${amount.toFixed(2)}) saved!`, 'success');
+      setIsReviewModalOpen(false);
+      setSelectedFile(null);
+      setPreviewUrl(null);
+      setReceiptId(null);
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not save this receipt expense.', 'error');
+    } finally {
+      setIsSavingExpense(false);
+    }
   };
 
   return (
@@ -374,9 +410,10 @@ export const ReceiptScannerPage: React.FC = () => {
             </button>
             <button
               type="submit"
-              className="px-6 py-2.5 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow transition-all"
+              disabled={isSavingExpense}
+              className="px-6 py-2.5 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow transition-all disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Confirm & Save Expense
+              {isSavingExpense ? 'Saving...' : 'Confirm & Save Expense'}
             </button>
           </div>
         </form>

@@ -1,17 +1,10 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  ChevronRight,
-  MoreHorizontal,
-  CheckCircle,
-  Laptop,
-  Boxes,
-  UserCheck
-} from 'lucide-react';
+import { ChevronRight, Wallet } from 'lucide-react';
 import { Expense } from '../../types';
 
 interface RightPanelSummaryProps {
-  balance: number;
+  balance: number | null;
   dateStr: string;
   recentExpenses: Expense[];
   onViewMoreTransactions?: () => void;
@@ -20,155 +13,78 @@ interface RightPanelSummaryProps {
 export const RightPanelSummary: React.FC<RightPanelSummaryProps> = ({
   balance,
   dateStr,
+  recentExpenses,
   onViewMoreTransactions,
 }) => {
   const navigate = useNavigate();
 
-  const todayTransactions = [
-    {
-      id: 'tx_01',
-      title: 'Hunter Macbook',
-      accountNo: '063873347859-798',
-      amount: 1280.5,
-      isNew: true,
-      icon: Laptop,
-      iconBg: 'bg-primary-light text-primary',
-    },
-    {
-      id: 'tx_02',
-      title: 'Hexagon',
-      accountNo: '924693249950-860',
-      amount: 240.0,
-      isNew: false,
-      icon: Boxes,
-      iconBg: 'bg-purple-100 text-purple-700',
-    },
-    {
-      id: 'tx_03',
-      title: 'Marco Ruiz',
-      accountNo: '063873347859-645',
-      amount: 450.5,
-      isNew: false,
-      icon: UserCheck,
-      iconBg: 'bg-card-lavender text-primary',
-    },
-  ];
-
   return (
     <div className="flex flex-col gap-6">
-      {/* Balance & Date Header matching Screenshot */}
-      <div className="bg-transparent px-2 pt-2">
+      <div className="bg-transparent px-2 pt-2 xl:pt-14">
         <h2 className="text-3xl font-extrabold text-navy tracking-tight">
-          $ {balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          {balance === null
+            ? '—'
+            : `$ ${balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
         </h2>
         <p className="text-xs text-navy-muted font-medium mt-1">
-          {dateStr}
+          {balance === null ? 'Current balance is unavailable' : dateStr}
         </p>
       </div>
 
-      {/* Today Section */}
-      <div className="bg-white rounded-4xl p-6 shadow-comet">
+      <div className="card-hover bg-white rounded-4xl p-6 shadow-comet">
         <div className="flex items-center justify-between mb-4">
-          <span className="text-xs font-bold text-navy uppercase tracking-wider">Today</span>
+          <span className="text-xs font-bold text-navy uppercase tracking-wider">Recent Expenses</span>
         </div>
 
         <div className="flex flex-col divide-y divide-gray-50">
-          {todayTransactions.map((tx) => {
-            const Icon = tx.icon;
-            return (
-              <div
-                key={tx.id}
-                onClick={() => navigate('/transactions')}
-                className="py-3 flex items-center justify-between group cursor-pointer hover:bg-navy-light/60 px-2 rounded-2xl transition-colors"
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-2xl ${tx.iconBg} flex items-center justify-center flex-shrink-0 shadow-sm`}>
-                    <Icon className="w-5 h-5 stroke-[2]" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h4 className="text-xs font-bold text-navy group-hover:text-primary transition-colors">
-                        {tx.title}
-                      </h4>
-                      {tx.isNew && (
-                        <span className="bg-accent-info text-white text-[9px] font-bold px-2 py-0.5 rounded-full uppercase">
-                          New
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[10px] text-navy-muted font-mono">{tx.accountNo}</p>
-                  </div>
+          {recentExpenses.slice(0, 3).map((expense) => (
+            <div
+              key={expense.id}
+              onClick={() => navigate('/transactions')}
+              className="py-3 flex items-center justify-between group cursor-pointer hover:bg-navy-light/60 px-2 rounded-2xl transition-colors"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-2xl bg-primary-light text-primary flex items-center justify-center flex-shrink-0 shadow-sm">
+                  <Wallet className="w-5 h-5 stroke-[2]" />
                 </div>
-
-                <ChevronRight className="w-4 h-4 text-navy-muted group-hover:text-navy group-hover:translate-x-0.5 transition-all" />
+                <div className="min-w-0">
+                  <h4 className="text-xs font-bold text-navy group-hover:text-primary transition-colors truncate">
+                    {expense.title}
+                  </h4>
+                  <p className="text-[10px] text-navy-muted">
+                    {expense.category?.name || 'Expense'} · {new Date(expense.date).toLocaleDateString()}
+                  </p>
+                </div>
               </div>
-            );
-          })}
+              <span className="text-xs font-bold text-navy whitespace-nowrap">
+                ${expense.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+          ))}
+          {recentExpenses.length === 0 && (
+            <p className="py-5 text-center text-xs text-navy-muted">No expenses recorded yet.</p>
+          )}
         </div>
 
-        {/* View More Pill Button */}
         <button
           onClick={onViewMoreTransactions || (() => navigate('/transactions'))}
-          className="w-full mt-4 py-2.5 bg-primary-light hover:bg-[#363B55] text-primary text-xs font-bold rounded-full transition-colors"
+          className="w-full mt-4 py-2.5 bg-primary-light hover:bg-[#363B55] text-primary text-xs font-bold rounded-full transition-colors flex items-center justify-center gap-1"
         >
-          View More
+          View More <ChevronRight className="w-3.5 h-3.5" />
         </button>
       </div>
 
-      {/* Loan Calculator / Budget Tracker Card */}
-      <div className="bg-white rounded-4xl p-6 shadow-comet flex flex-col justify-between">
-        <div className="flex items-start justify-between mb-2">
-          <div>
-            <h3 className="text-base font-bold text-navy">Loan Calculator</h3>
-            <p className="text-[11px] text-navy-muted mt-0.5 max-w-[200px]">
-              Select the amount needed and the reimbursement period
-            </p>
-          </div>
-          <button className="text-navy-muted hover:text-navy">
-            <MoreHorizontal className="w-4 h-4" />
-          </button>
-        </div>
-
-        {/* Blue Pill Amount Display with slider illusion matching screenshot */}
-        <div className="my-4 p-3 bg-card-blue/50 rounded-3xl flex items-center justify-between relative overflow-hidden border border-blue-100/60">
-          <div className="z-10 pl-2">
-            <h4 className="text-lg font-extrabold text-navy">$ 450.50</h4>
-            <span className="text-[10px] text-navy-muted font-medium">All loan amount</span>
-          </div>
-          <div className="w-20 h-10 bg-card-blue rounded-2xl shadow-inner flex items-center justify-center">
-            <CheckCircle className="w-4 h-4 text-primary" />
-          </div>
-        </div>
-
-        {/* People Avatar Chips + Count Badge */}
-        <div className="flex items-center justify-between pt-2">
-          <div className="flex items-center -space-x-2">
-            <img
-              src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=80&auto=format&fit=crop&q=80"
-              alt="Avatar 1"
-              className="w-7 h-7 rounded-full border-2 border-white object-cover"
-            />
-            <img
-              src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=80&auto=format&fit=crop&q=80"
-              alt="Avatar 2"
-              className="w-7 h-7 rounded-full border-2 border-white object-cover"
-            />
-            <img
-              src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=80&auto=format&fit=crop&q=80"
-              alt="Avatar 3"
-              className="w-7 h-7 rounded-full border-2 border-white object-cover"
-            />
-            <div className="w-7 h-7 rounded-full bg-navy text-white text-[9px] font-bold flex items-center justify-center border-2 border-white">
-              18
-            </div>
-          </div>
-          <button
-            onClick={() => navigate('/budgets')}
-            className="text-[11px] font-semibold text-primary hover:underline"
-          >
-            View More people
-          </button>
-        </div>
+      <div className="card-hover bg-white rounded-4xl p-6 shadow-comet flex flex-col justify-between">
+        <h3 className="text-base font-bold text-navy">Account Summary</h3>
+        <p className="text-[11px] text-navy-muted mt-2">
+          Balance and transaction totals are calculated from all account records in the selected period.
+        </p>
+        <button
+          onClick={() => navigate('/transactions')}
+          className="self-start mt-4 text-[11px] font-semibold text-primary hover:underline"
+        >
+          View transactions
+        </button>
       </div>
     </div>
   );

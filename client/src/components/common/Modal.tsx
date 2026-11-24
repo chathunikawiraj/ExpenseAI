@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
 interface ModalProps {
@@ -42,11 +43,11 @@ export const Modal: React.FC<ModalProps> = ({
     '2xl': 'max-w-2xl',
   }[maxWidth];
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-navy/40 backdrop-blur-sm transition-opacity"
+        className="fixed inset-0 bg-navy/40 backdrop-blur-sm modal-backdrop-enter"
         onClick={onClose}
         aria-hidden="true"
       />
@@ -55,7 +56,7 @@ export const Modal: React.FC<ModalProps> = ({
       <div
         role="dialog"
         aria-modal="true"
-        className={`relative w-full ${maxWidthClass} bg-white rounded-4xl shadow-comet-lg border border-purple-50 p-6 sm:p-8 z-10 animate-in fade-in zoom-in-95 duration-200`}
+        className={`relative w-full ${maxWidthClass} max-h-[calc(100vh-2rem)] overflow-y-auto overscroll-contain bg-white rounded-4xl shadow-comet-lg border border-purple-50 p-6 sm:p-8 z-10 modal-enter`}
       >
         <div className="flex items-start justify-between pb-4 border-b border-gray-100">
           <div>
@@ -73,6 +74,7 @@ export const Modal: React.FC<ModalProps> = ({
 
         <div className="mt-4">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };

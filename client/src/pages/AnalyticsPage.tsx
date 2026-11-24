@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { AppShell } from '../components/layout/AppShell';
 import {
   PieChart as RechartsPie,
@@ -16,36 +16,77 @@ import {
   CartesianGrid
 } from 'recharts';
 import { TrendingUp, PieChart, BarChart3, ArrowUpRight, ArrowDownLeft } from 'lucide-react';
-import { mockCategories } from '../data/mockData';
+import { analyticsApi } from '../services/apiService';
+import { ResourceStatus } from '../components/common/ResourceStatus';
+import { AnalyticsTrends, CategoryBreakdown, DashboardSummary } from '../types';
+
+const tooltipContentStyle = {
+  backgroundColor: '#22263A',
+  borderRadius: '16px',
+  border: '1px solid #363B55',
+  color: '#F4F2FF',
+  boxShadow: '0 12px 30px rgba(0, 0, 0, 0.35)',
+  fontSize: '12px',
+};
+
+const tooltipLabelStyle = { color: '#F4F2FF', fontWeight: 700 };
+const tooltipItemStyle = { color: '#F4F2FF' };
 
 export const AnalyticsPage: React.FC = () => {
-  // Category breakdown for Pie/Donut
-  const categoryData = [
-    { name: 'Shopping & Tech', value: 1520.5, color: '#9275F5' },
-    { name: 'Food & Dining', value: 85.3, color: '#F17D9A' },
-    { name: 'Transportation', value: 75.0, color: '#647FEA' },
-    { name: 'Utilities & Bills', value: 142.5, color: '#4BC9A2' },
-    { name: 'Entertainment', value: 64.0, color: '#B49AFF' },
-  ];
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [breakdown, setBreakdown] = useState<CategoryBreakdown | null>(null);
+  const [trends, setTrends] = useState<AnalyticsTrends | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshCount, setRefreshCount] = useState(0);
 
-  // Month-over-month comparison data
-  const momData = [
-    { month: 'Jun', income: 4800, expense: 2100 },
-    { month: 'Jul', income: 5200, expense: 2400 },
-    { month: 'Aug', income: 5500, expense: 2650 },
-    { month: 'Sep', income: 5835, expense: 1887 },
-  ];
+  useEffect(() => {
+    let active = true;
+    setIsLoading(true);
+    setError(null);
+    Promise.all([
+      analyticsApi.getSummary(),
+      analyticsApi.getCategoryBreakdown(),
+      analyticsApi.getTrends(6),
+    ])
+      .then(([nextSummary, nextBreakdown, nextTrends]) => {
+        if (!active) return;
+        setSummary(nextSummary);
+        setBreakdown(nextBreakdown);
+        setTrends(nextTrends);
+      })
+      .catch((cause: unknown) => {
+        if (active) setError(cause instanceof Error ? cause.message : 'Could not load analytics.');
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+    return () => { active = false; };
+  }, [refreshCount]);
 
-  // 30-day spending trend
-  const trendData = [
-    { day: 'Sep 1', spend: 120 },
-    { day: 'Sep 2', spend: 64 },
-    { day: 'Sep 3', spend: 142 },
-    { day: 'Sep 4', spend: 35 },
-    { day: 'Sep 5', spend: 75 },
-    { day: 'Sep 6', spend: 85 },
-    { day: 'Sep 7', spend: 1280 },
-  ];
+  const categoryData = (breakdown?.categories ?? []).map((item, index) => ({
+    name: item.name,
+    value: item.amount,
+    color: ['#9275F5', '#F17D9A', '#647FEA', '#4BC9A2', '#B49AFF'][index % 5],
+  }));
+  const momData = (trends?.monthly ?? []).map((item) => {
+    const [year, monthNumber] = item.month.split('-');
+    const label = new Date(Date.UTC(Number(year), Number(monthNumber) - 1, 1))
+      .toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' });
+    return { month: label, income: item.income, expense: item.expense };
+  });
+  const trendData = (trends?.daily ?? []).map((item) => ({
+    day: new Date(`${item.date}T00:00:00Z`).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      timeZone: 'UTC',
+    }),
+    spend: item.expense,
+  }));
+  const largestCategory = (breakdown?.categories ?? []).slice().sort((a, b) => b.amount - a.amount)[0];
+  const averageDailySpend = trendData.length
+    ? trendData.reduce((total, item) => total + item.spend, 0) / trendData.length
+    : 0;
 
   return (
     <AppShell>
@@ -58,15 +99,23 @@ export const AnalyticsPage: React.FC = () => {
         </p>
       </div>
 
+      <ResourceStatus
+        isLoading={isLoading}
+        error={error}
+        onRetry={() => setRefreshCount((count) => count + 1)}
+      />
+
       {/* Top 3 Metric Stat Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-card-blue rounded-4xl p-6 shadow-comet flex items-center justify-between">
+        <div className="card-hover bg-card-blue rounded-4xl p-6 shadow-comet flex items-center justify-between">
           <div>
             <span className="text-xs font-semibold text-navy/70">Total Net Savings</span>
-            <h3 className="text-2xl font-extrabold text-navy mt-1">+$3,948.20</h3>
+            <h3 className="text-2xl font-extrabold text-navy mt-1">
+              {summary ? `${summary.netBalance >= 0 ? '+' : '-'}$${Math.abs(summary.netBalance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+            </h3>
             <span className="text-[11px] font-bold text-emerald-700 flex items-center gap-1 mt-1">
               <ArrowDownLeft className="w-3.5 h-3.5" />
-              +14.2% vs last month
+              {summary ? `${summary.transactionCount} transactions` : 'Loading totals'}
             </span>
           </div>
           <div className="w-12 h-12 rounded-3xl bg-white shadow-sm flex items-center justify-center text-primary">
@@ -74,12 +123,16 @@ export const AnalyticsPage: React.FC = () => {
           </div>
         </div>
 
-        <div className="bg-card-lavender rounded-4xl p-6 shadow-comet flex items-center justify-between">
+        <div className="card-hover bg-card-lavender rounded-4xl p-6 shadow-comet flex items-center justify-between">
           <div>
             <span className="text-xs font-semibold text-navy/70">Largest Category</span>
-            <h3 className="text-2xl font-extrabold text-navy mt-1">Tech (80.5%)</h3>
+            <h3 className="text-2xl font-extrabold text-navy mt-1">
+              {largestCategory ? largestCategory.name : 'No expenses'}
+            </h3>
             <span className="text-[11px] text-navy-muted font-medium mt-1 block">
-              $1,520.50 allocated
+              {largestCategory
+                ? `$${largestCategory.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · ${largestCategory.percentage.toFixed(1)}%`
+                : 'No category allocation yet'}
             </span>
           </div>
           <div className="w-12 h-12 rounded-3xl bg-white shadow-sm flex items-center justify-center text-primary">
@@ -87,13 +140,15 @@ export const AnalyticsPage: React.FC = () => {
           </div>
         </div>
 
-        <div className="bg-white rounded-4xl p-6 shadow-comet flex items-center justify-between">
+        <div className="card-hover bg-white rounded-4xl p-6 shadow-comet flex items-center justify-between">
           <div>
             <span className="text-xs font-semibold text-navy/70">Avg. Daily Spend</span>
-            <h3 className="text-2xl font-extrabold text-navy mt-1">$269.61</h3>
+            <h3 className="text-2xl font-extrabold text-navy mt-1">
+              ${averageDailySpend.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </h3>
             <span className="text-[11px] font-bold text-rose-600 flex items-center gap-1 mt-1">
               <ArrowUpRight className="w-3.5 h-3.5" />
-              Impacted by hardware buy
+              Based on 30 daily values
             </span>
           </div>
           <div className="w-12 h-12 rounded-3xl bg-primary-light flex items-center justify-center text-primary">
@@ -105,7 +160,7 @@ export const AnalyticsPage: React.FC = () => {
       {/* Charts Grid: Month-over-Month Bar (Left) and Donut Category (Right) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
         {/* MoM Comparison Bar Chart */}
-        <div className="lg:col-span-7 bg-white rounded-4xl p-7 shadow-comet flex flex-col justify-between">
+        <div className="card-hover lg:col-span-7 bg-white rounded-4xl p-7 shadow-comet flex flex-col justify-between">
           <div>
             <h3 className="text-lg font-bold text-navy">Month-over-Month Cashflow</h3>
             <p className="text-xs text-navy-muted mt-0.5">Comparing Income vs Expense trends</p>
@@ -118,13 +173,9 @@ export const AnalyticsPage: React.FC = () => {
                 <XAxis dataKey="month" tick={{ fontSize: 12, fill: '#A5A5BE' }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 12, fill: '#A5A5BE' }} axisLine={false} tickLine={false} />
                 <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#22263A',
-                    borderRadius: '16px',
-                    border: 'none',
-                    color: '#fff',
-                    fontSize: '12px',
-                  }}
+                  contentStyle={tooltipContentStyle}
+                  labelStyle={tooltipLabelStyle}
+                  itemStyle={tooltipItemStyle}
                 />
                 <Legend iconType="circle" wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
                 <Bar dataKey="income" name="Income ($)" fill="#4BC9A2" radius={[8, 8, 0, 0]} />
@@ -135,10 +186,10 @@ export const AnalyticsPage: React.FC = () => {
         </div>
 
         {/* Category Allocation Donut Chart */}
-        <div className="lg:col-span-5 bg-white rounded-4xl p-7 shadow-comet flex flex-col justify-between">
+        <div className="card-hover lg:col-span-5 bg-white rounded-4xl p-7 shadow-comet flex flex-col justify-between">
           <div>
             <h3 className="text-lg font-bold text-navy">Spending by Category</h3>
-            <p className="text-xs text-navy-muted mt-0.5">Categorical distribution for September</p>
+            <p className="text-xs text-navy-muted mt-0.5">Categorical distribution across all records</p>
           </div>
 
           <div className="h-64 w-full relative flex items-center justify-center">
@@ -158,13 +209,9 @@ export const AnalyticsPage: React.FC = () => {
                   ))}
                 </Pie>
                 <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#22263A',
-                    borderRadius: '16px',
-                    border: 'none',
-                    color: '#fff',
-                    fontSize: '12px',
-                  }}
+                  contentStyle={tooltipContentStyle}
+                  labelStyle={tooltipLabelStyle}
+                  itemStyle={tooltipItemStyle}
                 />
               </RechartsPie>
             </ResponsiveContainer>
@@ -182,7 +229,7 @@ export const AnalyticsPage: React.FC = () => {
       </div>
 
       {/* 30-Day Line Trend Chart */}
-      <div className="bg-white rounded-4xl p-7 shadow-comet flex flex-col justify-between">
+      <div className="card-hover bg-white rounded-4xl p-7 shadow-comet flex flex-col justify-between">
         <div>
           <h3 className="text-lg font-bold text-navy">Daily Expense Trajectory</h3>
           <p className="text-xs text-navy-muted mt-0.5">Daily outlays across the current billing period</p>
@@ -195,13 +242,9 @@ export const AnalyticsPage: React.FC = () => {
               <XAxis dataKey="day" tick={{ fontSize: 12, fill: '#A5A5BE' }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fontSize: 12, fill: '#A5A5BE' }} axisLine={false} tickLine={false} />
               <Tooltip
-                contentStyle={{
-                  backgroundColor: '#22263A',
-                  borderRadius: '16px',
-                  border: 'none',
-                  color: '#fff',
-                  fontSize: '12px',
-                }}
+                contentStyle={tooltipContentStyle}
+                labelStyle={tooltipLabelStyle}
+                itemStyle={tooltipItemStyle}
               />
               <Line
                 type="monotone"

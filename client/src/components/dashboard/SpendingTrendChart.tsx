@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   AreaChart,
   Area,
@@ -6,42 +6,179 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
-import { ChevronDown, ArrowDownLeft, ArrowUpRight, MoreHorizontal } from 'lucide-react';
+import { ChevronDown, ArrowDownLeft, ArrowUpRight } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { CardActionMenu } from '../common/CardActionMenu';
+import { AnalyticsTrends, Expense, Income } from '../../types';
+
+type Period = 'This week' | 'This month' | 'This year';
+
+interface TrendPoint {
+  label: string;
+  income: number;
+  expense: number;
+}
 
 interface SpendingTrendChartProps {
-  data: { day: string; amount: number; dispute: number }[];
-  incomeTotal: number;
-  expenseTotal: number;
+  incomes: Income[];
+  expenses: Expense[];
+  analyticsTrends?: AnalyticsTrends | null;
+}
+
+const buildTrend = (period: Period, incomes: Income[], expenses: Expense[]) => {
+  const transactions = [
+    ...incomes.map((income) => ({
+      date: income.date.slice(0, 10),
+      amount: income.amount,
+      type: 'income' as const,
+    })),
+    ...expenses.map((expense) => ({
+      date: expense.date.slice(0, 10),
+      amount: expense.amount,
+      type: 'expense' as const,
+    })),
+  ];
+
+  const latestDate =
+    transactions.reduce<Date | null>((latest, transaction) => {
+      const date = new Date(`${transaction.date}T00:00:00Z`);
+      return !latest || date > latest ? date : latest;
+    }, null) || new Date();
+  const year = latestDate.getUTCFullYear();
+  const month = latestDate.getUTCMonth();
+  const day = latestDate.getUTCDate();
+  const startDate =
+    period === 'This year'
+      ? new Date(Date.UTC(year, 0, 1))
+      : period === 'This month'
+        ? new Date(Date.UTC(year, month, 1))
+        : new Date(Date.UTC(year, month, day - 6));
+  const pointCount =
+    period === 'This year'
+      ? 12
+      : period === 'This month'
+        ? new Date(Date.UTC(year, month + 1, 0)).getUTCDate()
+        : 7;
+
+  const points = Array.from({ length: pointCount }, (_, index) => {
+    const date =
+      period === 'This year'
+        ? new Date(Date.UTC(year, index, 1))
+        : new Date(startDate.getTime() + index * 24 * 60 * 60 * 1000);
+    const key = period === 'This year' ? date.toISOString().slice(0, 7) : date.toISOString().slice(0, 10);
+    const label =
+      period === 'This year'
+        ? date.toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' })
+        : period === 'This month'
+          ? String(date.getUTCDate())
+          : date.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });
+
+    return { key, point: { label, income: 0, expense: 0 } satisfies TrendPoint };
+  });
+  const pointsByKey = new Map(points.map(({ key, point }) => [key, point]));
+  const endDate =
+    period === 'This year'
+      ? new Date(Date.UTC(year, 11, 31))
+      : period === 'This month'
+        ? new Date(Date.UTC(year, month + 1, 0))
+        : new Date(Date.UTC(year, month, day));
+
+  transactions.forEach((transaction) => {
+    const transactionDate = new Date(`${transaction.date}T00:00:00Z`);
+    if (transactionDate < startDate || transactionDate > endDate) return;
+    const key = period === 'This year' ? transaction.date.slice(0, 7) : transaction.date;
+    const point = pointsByKey.get(key);
+    if (point) point[transaction.type] += transaction.amount;
+  });
+
+  const trend = points.map(({ point }) => point);
+  return {
+    trend,
+    incomeTotal: trend.reduce((total, point) => total + point.income, 0),
+    expenseTotal: trend.reduce((total, point) => total + point.expense, 0),
+    activePeriods: trend.filter((point) => point.income > 0 || point.expense > 0).length,
+  };
 }
 
 export const SpendingTrendChart: React.FC<SpendingTrendChartProps> = ({
-  data,
-  incomeTotal,
-  expenseTotal,
+  incomes,
+  expenses,
+  analyticsTrends,
 }) => {
-  const [period, setPeriod] = useState<'This week' | 'This month' | 'This year'>('This week');
+  const navigate = useNavigate();
+  const [period, setPeriod] = useState<Period>('This week');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const periodData = useMemo(() => {
+    if (!analyticsTrends) return buildTrend(period, incomes, expenses);
+    if (period === 'This year') {
+      const trend = analyticsTrends.monthly.map((item) => {
+        const monthNumber = Number(item.month.slice(5, 7));
+        const label = new Date(Date.UTC(2000, monthNumber - 1, 1))
+          .toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' });
+        return { label, income: item.income, expense: item.expense };
+      });
+      return {
+        trend,
+        incomeTotal: trend.reduce((total, item) => total + item.income, 0),
+        expenseTotal: trend.reduce((total, item) => total + item.expense, 0),
+        activePeriods: trend.filter((item) => item.income > 0 || item.expense > 0).length,
+      };
+    }
+    const now = new Date();
+    const filtered = analyticsTrends.daily.filter((item) => {
+      if (period === 'This week') {
+        const cutoff = new Date(now);
+        cutoff.setUTCDate(cutoff.getUTCDate() - 6);
+        return item.date >= cutoff.toISOString().slice(0, 10);
+      }
+      return item.date.slice(0, 7) === now.toISOString().slice(0, 7);
+    });
+    const trend = filtered.map((item) => ({
+      label: period === 'This month'
+        ? String(Number(item.date.slice(8, 10)))
+        : new Date(`${item.date}T00:00:00Z`).toLocaleDateString('en-US', {
+            weekday: 'short',
+            timeZone: 'UTC',
+          }),
+      income: 0,
+      expense: item.expense,
+    }));
+    return {
+      trend,
+      incomeTotal: 0,
+      expenseTotal: trend.reduce((total, item) => total + item.expense, 0),
+      activePeriods: trend.filter((item) => item.expense > 0).length,
+    };
+  }, [period, incomes, expenses, analyticsTrends]);
+  const periodUnit = period === 'This year' ? 'months' : 'days';
 
   return (
-    <div className="bg-white rounded-4xl p-7 shadow-comet flex flex-col justify-between">
+    <div className="card-hover bg-white rounded-4xl p-7 shadow-comet flex flex-col justify-between">
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
           <div className="flex items-center gap-2">
-            <h3 className="text-xl font-bold text-navy">Dispute Progress</h3>
-            <button className="text-navy-muted hover:text-navy transition-colors">
-              <MoreHorizontal className="w-4 h-4" />
-            </button>
+            <h3 className="text-xl font-bold text-navy">Spending Trend</h3>
+            <CardActionMenu
+              label="Spending trend actions"
+              actions={[
+                { label: 'Open Analytics', onSelect: () => navigate('/analytics') },
+                { label: 'View Transactions', onSelect: () => navigate('/transactions') },
+              ]}
+            />
           </div>
           <p className="text-xs text-primary font-semibold mt-0.5">
-            30 dispute <span className="text-navy-muted font-normal">in this month</span>
+            Expenses by {period === 'This year' ? 'month' : 'day'}
+            <span className="text-navy-muted font-normal"> · {period}</span>
           </p>
         </div>
 
         {/* Period Selector Pill */}
         <div className="relative">
           <button
+            type="button"
             onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+            aria-expanded={isDropdownOpen}
             className="flex items-center gap-2 px-4 py-1.5 bg-[#F8F9FE] hover:bg-gray-100 text-xs font-semibold text-navy rounded-full transition-all border border-gray-100"
           >
             <span>{period}</span>
@@ -53,6 +190,7 @@ export const SpendingTrendChart: React.FC<SpendingTrendChartProps> = ({
               {(['This week', 'This month', 'This year'] as const).map((opt) => (
                 <button
                   key={opt}
+                  type="button"
                   onClick={() => {
                     setPeriod(opt);
                     setIsDropdownOpen(false);
@@ -69,29 +207,32 @@ export const SpendingTrendChart: React.FC<SpendingTrendChartProps> = ({
         </div>
       </div>
 
-      {/* Recharts Curved Area Graph matching screenshot curve & purple indicator badge */}
-      <div className="h-44 w-full my-4 relative">
-        {/* Floating marker pill badge mirroring the screenshot's '25%' indicator */}
-        <div className="absolute right-[22%] top-[18%] -translate-y-full -translate-x-1/2 bg-navy text-white text-[11px] font-bold px-2.5 py-1 rounded-full shadow-md z-10 flex items-center gap-1">
-          <span>25%</span>
-          <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-navy rotate-45" />
-        </div>
-
+      {/* The selected period changes the number and grouping of chart points. */}
+      <div className="h-44 w-full my-4">
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={data} margin={{ top: 20, right: 10, left: 10, bottom: 0 }}>
+          <AreaChart data={periodData.trend} margin={{ top: 20, right: 10, left: 10, bottom: 0 }}>
             <defs>
               <linearGradient id="purpleGradient" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor="#9275F5" stopOpacity={0.25} />
                 <stop offset="95%" stopColor="#9275F5" stopOpacity={0.0} />
               </linearGradient>
             </defs>
-            <XAxis dataKey="day" hide />
+            <XAxis
+              dataKey="label"
+              interval={period === 'This month' ? 4 : period === 'This year' ? 1 : 0}
+              tick={{ fontSize: 10, fill: '#8790A8' }}
+              tickLine={false}
+              axisLine={false}
+              height={24}
+            />
             <Tooltip
-              content={({ active, payload }) => {
+              content={({ active, payload, label }) => {
                 if (active && payload && payload.length) {
                   return (
-                    <div className="bg-navy text-white text-xs px-3 py-1.5 rounded-xl shadow-lg">
-                      <p className="font-bold">${payload[0].value}</p>
+                    <div className="bg-navy text-white text-xs px-3 py-2 rounded-xl shadow-lg">
+                      <p className="font-bold">{label}</p>
+                      <p>Income: ${Number(payload[0].payload.income).toFixed(2)}</p>
+                      <p>Expenses: ${Number(payload[0].payload.expense).toFixed(2)}</p>
                     </div>
                   );
                 }
@@ -100,7 +241,7 @@ export const SpendingTrendChart: React.FC<SpendingTrendChartProps> = ({
             />
             <Area
               type="monotone"
-              dataKey="amount"
+              dataKey="expense"
               stroke="#9275F5"
               strokeWidth={3}
               fillOpacity={1}
@@ -118,9 +259,10 @@ export const SpendingTrendChart: React.FC<SpendingTrendChartProps> = ({
             <ArrowDownLeft className="w-5 h-5 stroke-[2.2]" />
           </div>
           <div>
-            <h4 className="text-sm font-bold text-navy">Generated</h4>
+            <h4 className="text-sm font-bold text-navy">Income</h4>
             <p className="text-xs text-navy-muted">
-              ${incomeTotal.toLocaleString(undefined, { minimumFractionDigits: 0 })} <span className="text-[11px]">(200 acc)</span>
+              ${periodData.incomeTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              <span className="text-[11px]">({periodData.activePeriods} active {periodUnit})</span>
             </p>
           </div>
         </div>
@@ -130,9 +272,10 @@ export const SpendingTrendChart: React.FC<SpendingTrendChartProps> = ({
             <ArrowUpRight className="w-5 h-5 stroke-[2.2]" />
           </div>
           <div>
-            <h4 className="text-sm font-bold text-navy">Removed</h4>
+            <h4 className="text-sm font-bold text-navy">Expenses</h4>
             <p className="text-xs text-navy-muted">
-              ${expenseTotal.toLocaleString(undefined, { minimumFractionDigits: 0 })} <span className="text-[11px]">(12 acc)</span>
+              ${periodData.expenseTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              <span className="text-[11px]">({periodData.activePeriods} active {periodUnit})</span>
             </p>
           </div>
         </div>

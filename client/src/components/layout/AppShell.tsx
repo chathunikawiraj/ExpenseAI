@@ -1,6 +1,7 @@
 import React, { ReactNode } from 'react';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
+import { useAuth } from '../../context/AuthContext';
 
 interface AppShellProps {
   children: ReactNode;
@@ -13,8 +14,10 @@ export const AppShell: React.FC<AppShellProps> = ({
   children,
   rightPanel,
   onSearch,
-  isAdmin = true,
+  isAdmin,
 }) => {
+  const { user } = useAuth();
+
   return (
     <div className="min-h-screen bg-background relative flex flex-col md:flex-row text-navy font-sans antialiased overflow-x-hidden">
       {/* Ambient color glow for the Midnight AI theme */}
@@ -25,15 +28,26 @@ export const AppShell: React.FC<AppShellProps> = ({
       </div>
 
       {/* Slim icon-only left sidebar */}
-      <Sidebar isAdmin={isAdmin} />
+      <Sidebar isAdmin={isAdmin ?? user?.role === 'ADMIN'} />
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 z-10 pb-20 md:pb-6">
-        <Topbar onSearch={onSearch} />
+        <Topbar
+          onSearch={onSearch}
+          user={
+            user
+              ? {
+                  name: user.name,
+                  role: user.role.toLowerCase(),
+                  avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
+                }
+              : undefined
+          }
+        />
 
         <main className="flex-1 px-4 sm:px-6 md:px-8 py-2 max-w-7xl w-full mx-auto">
           {rightPanel ? (
-            <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+            <div className="page-enter grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
               {/* Central primary content (e.g. Dashboard) */}
               <div className="xl:col-span-8 flex flex-col gap-6">
                 {children}
@@ -45,7 +59,7 @@ export const AppShell: React.FC<AppShellProps> = ({
               </aside>
             </div>
           ) : (
-            <div className="flex flex-col gap-6">
+            <div className="page-enter flex flex-col gap-6">
               {children}
             </div>
           )}

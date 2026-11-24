@@ -1,0 +1,219 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum AccountStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum OcrStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+}
+
+enum NotificationType {
+  BUDGET_ALERT
+  SAVINGS_UPDATE
+  SYSTEM
+}
+
+model User {
+  id            String        @id @default(uuid()) @db.Uuid
+  name          String        @db.VarChar(100)
+  email         String        @unique @db.VarChar(255)
+  passwordHash  String
+  role          UserRole      @default(USER)
+  currency      String        @default("LKR") @db.VarChar(3)
+  monthlyIncome Decimal?      @db.Decimal(10, 2)
+  status        AccountStatus @default(ACTIVE)
+  isVerified    Boolean       @default(false)
+  verificationToken String?   @unique
+  verificationExpiresAt DateTime?
+  resetToken    String?       @unique
+  resetExpiresAt DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  incomes       Income[]
+  expenses      Expense[]
+  categories    Category[]
+  budgets       Budget[]
+  savingsGoals  SavingsGoal[]
+  notifications Notification[]
+  insights      Insight[]
+  receipts      Receipt[]
+  refreshTokens RefreshToken[]
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  tokenHash String   @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Category {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @db.VarChar(80)
+  isDefault Boolean  @default(false)
+  userId    String?  @db.Uuid
+  createdAt DateTime @default(now())
+
+  user     User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expenses Expense[]
+  budgets  Budget[]
+
+  @@unique([userId, name])
+  @@index([userId])
+}
+
+model Income {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @db.Uuid
+  source      String   @db.VarChar(100)
+  amount      Decimal  @db.Decimal(10, 2)
+  date        DateTime @db.Date
+  description String?  @db.VarChar(500)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, date])
+}
+
+model Expense {
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String   @db.Uuid
+  categoryId    String   @db.Uuid
+  title         String   @db.VarChar(100)
+  amount        Decimal  @db.Decimal(10, 2)
+  date          DateTime @db.Date
+  paymentMethod String?  @db.VarChar(50)
+  description   String?  @db.VarChar(500)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  receipt  Receipt?
+
+  @@index([userId, date])
+  @@index([userId, categoryId])
+}
+
+model Receipt {
+  id         String    @id @default(uuid()) @db.Uuid
+  expenseId  String?   @unique @db.Uuid
+  userId     String    @db.Uuid
+  fileUrl    String
+  ocrVendor  String?
+  ocrDate    DateTime? @db.Date
+  ocrAmount  Decimal?  @db.Decimal(10, 2)
+  ocrStatus  OcrStatus @default(PENDING)
+  uploadedAt DateTime  @default(now())
+
+  expense Expense? @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Budget {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  categoryId String?  @db.Uuid
+  month      DateTime @db.Date
+  amount     Decimal  @db.Decimal(10, 2)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user            User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category        Category?              @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  thresholdEvents BudgetThresholdEvent[]
+
+  @@index([userId, month])
+}
+
+model BudgetThresholdEvent {
+  id          String   @id @default(uuid()) @db.Uuid
+  budgetId    String   @db.Uuid
+  threshold   Int
+  triggeredAt DateTime @default(now())
+
+  budget Budget @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+
+  @@unique([budgetId, threshold])
+}
+
+model SavingsGoal {
+  id           String    @id @default(uuid()) @db.Uuid
+  userId       String    @db.Uuid
+  name         String    @db.VarChar(100)
+  targetAmount Decimal   @db.Decimal(10, 2)
+  targetDate   DateTime? @db.Date
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  user          User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contributions SavingsContribution[]
+
+  @@index([userId])
+}
+
+model SavingsContribution {
+  id        String   @id @default(uuid()) @db.Uuid
+  goalId    String   @db.Uuid
+  amount    Decimal  @db.Decimal(10, 2)
+  date      DateTime @db.Date
+  note      String?  @db.VarChar(300)
+  createdAt DateTime @default(now())
+
+  goal SavingsGoal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+
+  @@index([goalId, date])
+}
+
+model Notification {
+  id        String           @id @default(uuid()) @db.Uuid
+  userId    String           @db.Uuid
+  type      NotificationType
+  message   String           @db.VarChar(500)
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+}
+
+model Insight {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  period    String   @db.VarChar(20)
+  content   String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, period])
+}

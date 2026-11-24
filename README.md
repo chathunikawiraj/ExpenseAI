@@ -102,13 +102,15 @@ cd ../server && npm install
 ### 3. Database Initialization (PostgreSQL)
 To run local PostgreSQL using Docker Compose:
 ```bash
-docker compose up -d
+docker compose up -d postgres
 ```
-Generate the Prisma client:
+Copy `.env.example` to `server/.env`, then set `DATABASE_URL` to the local PostgreSQL URL configured in `docker-compose.yml` and provide local JWT secrets. Generate the Prisma client, create/apply the initial migration, and seed default categories:
 ```bash
 npm --workspace=server run prisma:generate
+npm --workspace=server run prisma:migrate -- --name init
+npm --workspace=server run prisma:seed
 ```
-*(Note: ExpenseAI includes an intelligent data repository fallback that initializes all seed demo accounts, categories, and 3 months of transactions automatically if PostgreSQL is temporarily offline during local review).*
+The API connects to PostgreSQL before listening and reports database readiness at `/health`. The Prisma schema and connection are being introduced first; most API controllers still use the in-memory store and will need to be migrated to Prisma for application records to persist.
 
 ### 4. Running the Development Servers
 Run both client and server concurrently from the monorepo root:
@@ -145,8 +147,14 @@ Interactive Swagger/OpenAPI documentation is available at:
 👉 **[http://localhost:5000/api/v1/docs](http://localhost:5000/api/v1/docs)**
 
 ### Summary of REST Endpoints (`/api/v1`)
-- **Authentication**: `POST /auth/register`, `POST /auth/login`, `POST /auth/logout`, `POST /auth/refresh`, `POST /auth/forgot-password`, `POST /auth/reset-password`, `GET /auth/me`, `PUT /auth/profile`, `DELETE /auth/account`.
-- **Transactions**: `GET/POST /incomes`, `PUT/DELETE /incomes/:id`, `GET/POST /expenses`, `PUT/DELETE /expenses/:id`, `GET/POST /categories`.
+- **Authentication**: `POST /auth/register`, `POST /auth/verify-email`, `POST /auth/resend-verification`, `POST /auth/login`, `POST /auth/logout`, `POST /auth/refresh`, `POST /auth/forgot-password`, `POST /auth/reset-password`, `GET /auth/me`, `PUT /auth/profile`, `DELETE /auth/account`.
+- **Transactions**: `GET /transactions` (globally sorted and paginated income/expense records), `GET/POST /incomes`, `PUT/DELETE /incomes/:id`, `GET/POST /expenses`, `PUT/DELETE /expenses/:id`, `GET/POST /categories`.
+- **Dashboard Summary**: `GET /analytics/summary` (optional `month=YYYY-MM`, `startDate=YYYY-MM-DD`, or `endDate=YYYY-MM-DD` filters).
+- **Dashboard Analytics**: `GET /analytics/category-breakdown` and `GET /analytics/trends?months=6` provide database-backed category allocations and monthly/daily chart data.
+- **Budgets & Goals**: `GET/POST /budgets`, `DELETE /budgets/:id`, `GET/POST /goals`, `PUT/PATCH /goals/:id`, `POST /goals/:id/contributions`, and `DELETE /goals/:id`.
+- **Notifications & Insights**: `GET/PATCH/DELETE /notifications`, `PATCH /notifications/read-all`, `GET /insights`, and `POST /insights/generate`.
+- **Receipts**: `POST /receipts` uploads an authenticated JPG/PNG receipt for OCR, `PATCH /receipts/:id/associate` links it to an expense, `GET /receipts/:id/file` serves it securely, and `DELETE /receipts/:id` removes it.
+- **Account Security**: `PUT /auth/password` changes the password after current-password verification; `DELETE /auth/account` requires `{ "confirmation": "DELETE" }`.
 - **Budgets & Goals**: `GET/POST /budgets`, `DELETE /budgets/:id`, `GET/POST/PUT/DELETE /goals`.
 - **Receipts & OCR**: `POST /receipts` (Multipart upload with magic-byte validation & Tesseract OCR), `DELETE /receipts/:id`.
 - **Analytics & Export**: `GET /analytics/summary`, `GET /analytics/trends`, `GET /reports/:month`, `GET /export/csv` (Formula-injection protected).

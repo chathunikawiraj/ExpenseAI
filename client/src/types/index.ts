@@ -41,8 +41,9 @@ export interface Income {
   amount: number;
   date: string;
   description?: string;
-  recurring: RecurringFrequency;
+  recurring?: RecurringFrequency;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface Expense {
@@ -53,12 +54,27 @@ export interface Expense {
   title: string;
   amount: number;
   date: string;
-  paymentMethod: PaymentMethod;
+  paymentMethod: PaymentMethod | null;
   description?: string;
-  recurring: RecurringFrequency;
+  recurring?: RecurringFrequency;
   receiptId?: string;
   receipt?: Receipt;
   createdAt: string;
+  updatedAt?: string;
+}
+
+export interface UnifiedTransaction {
+  id: string;
+  type: 'income' | 'expense';
+  title: string;
+  amount: number;
+  date: string;
+  description?: string;
+  createdAt: string;
+  updatedAt?: string;
+  categoryId?: string;
+  category?: Category;
+  paymentMethod?: PaymentMethod | null;
 }
 
 export interface Receipt {
@@ -91,8 +107,10 @@ export interface SavingsGoal {
   name: string;
   targetAmount: number;
   savedAmount: number;
-  targetDate: string;
+  targetDate?: string | null;
   color?: string;
+  remainingAmount?: number;
+  percentage?: number;
 }
 
 export interface NotificationItem {
@@ -120,4 +138,34 @@ export interface DashboardMetrics {
   budgetUsagePercentage: number;
   totalBudget: number;
   currency: string;
+}
+
+export interface DashboardSummary {
+  totalIncome: number;
+  totalExpenses: number;
+  netBalance: number;
+  transactionCount: number;
+  incomeCount: number;
+  expenseCount: number;
+  dateRange: {
+    startDate: string | null;
+    endDate: string | null;
+  };
+}
+
+export interface CategoryBreakdownItem {
+  categoryId: string;
+  name: string;
+  amount: number;
+  percentage: number;
+}
+
+export interface CategoryBreakdown {
+  totalExpenses: number;
+  categories: CategoryBreakdownItem[];
+}
+
+export interface AnalyticsTrends {
+  monthly: Array<{ month: string; income: number; expense: number }>;
+  daily: Array<{ date: string; expense: number }>;
 }
