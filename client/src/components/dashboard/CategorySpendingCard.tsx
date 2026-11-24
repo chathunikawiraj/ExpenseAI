@@ -2,16 +2,19 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Tag } from 'lucide-react';
 import { CardActionMenu } from '../common/CardActionMenu';
-import { Category, Expense } from '../../types';
+import { Category, CategoryBreakdown, Expense } from '../../types';
 
 interface CategorySpendingCardProps {
   categories: Category[];
   expenses: Expense[];
+  breakdown?: CategoryBreakdown | null;
 }
 
-export const CategorySpendingCard: React.FC<CategorySpendingCardProps> = ({ categories, expenses }) => {
+export const CategorySpendingCard: React.FC<CategorySpendingCardProps> = ({ categories, expenses, breakdown }) => {
   const navigate = useNavigate();
-  const categoryTotals = expenses.reduce<Record<string, number>>((totals, expense) => {
+  const categoryTotals = breakdown
+    ? Object.fromEntries(breakdown.categories.map((item) => [item.categoryId, item.amount]))
+    : expenses.reduce<Record<string, number>>((totals, expense) => {
     totals[expense.categoryId] = (totals[expense.categoryId] || 0) + expense.amount;
     return totals;
   }, {});
@@ -30,7 +33,9 @@ export const CategorySpendingCard: React.FC<CategorySpendingCardProps> = ({ cate
       <div className="flex items-center justify-between mb-4">
         <div>
           <h3 className="text-xl font-bold text-navy">Spending by Category</h3>
-          <p className="text-xs text-navy-muted mt-0.5">Your highest expense categories</p>
+          <p className="text-xs text-navy-muted mt-0.5">
+            {breakdown ? 'Database-backed category totals' : 'Categories in the latest loaded expenses'}
+          </p>
         </div>
         <CardActionMenu
           label="Category spending actions"

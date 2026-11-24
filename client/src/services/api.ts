@@ -18,18 +18,50 @@ const apiErrorFromResponse = async (response: Response): Promise<ApiError> => {
   try {
     body = await response.json();
   } catch {
-    return new ApiError('Request failed', undefined, response.status);
+    const message = response.status >= 500
+      ? 'ExpenseAI is temporarily unavailable. Please try again later.'
+      : 'The server returned an unreadable response.';
+    return new ApiError(message, undefined, response.status);
   }
 
   const details = body !== null && typeof body === 'object'
     ? body as Record<string, unknown>
     : {};
+  const validationMessages = Array.isArray(details.details)
+    ? details.details
+        .map((issue) => {
+          if (issue === null || typeof issue !== 'object') return null;
+          const validationIssue = issue as Record<string, unknown>;
+          if (typeof validationIssue.message !== 'string') return null;
+          const field = typeof validationIssue.field === 'string'
+            ? `${validationIssue.field}: `
+            : '';
+          return `${field}${validationIssue.message}`;
+        })
+        .filter((message): message is string => message !== null)
+    : [];
+  const message = typeof details.error === 'string'
+    ? details.error
+    : `HTTP error ${response.status}`;
 
   return new ApiError(
-    typeof details.error === 'string' ? details.error : `HTTP error ${response.status}`,
+    validationMessages.length > 0
+      ? `${message} ${validationMessages.join(' ')}`
+      : message,
     typeof details.code === 'string' ? details.code : undefined,
     response.status,
   );
+};
+
+const fetchApi = async (url: string, options: RequestInit): Promise<Response> => {
+  try {
+    return await fetch(url, options);
+  } catch (cause) {
+    if (cause instanceof TypeError) {
+      throw new ApiError('Unable to connect to ExpenseAI. Check your connection and try again.', 'NETWORK_ERROR');
+    }
+    throw cause;
+  }
 };
 
 let accessToken: string | null = localStorage.getItem('expenseai_access_token');
@@ -60,7 +92,7 @@ export async function apiRequest<T = any>(
     headers.set('Authorization', `Bearer ${accessToken}`);
   }
 
-  const response = await fetch(url, {
+  const response = await fetchApi(url, {
     ...options,
     headers,
     credentials: 'include', // sends httpOnly refresh token cookie (FR-03)
@@ -69,7 +101,7 @@ export async function apiRequest<T = any>(
   // Handle 401: Token expired, attempt refresh once
   if (response.status === 401 && !endpoint.includes('/auth/login') && !endpoint.includes('/auth/refresh')) {
     try {
-      const refreshRes = await fetch(`${API_BASE_URL}/auth/refresh`, {
+      const refreshRes = await fetchApi(`${API_BASE_URL}/auth/refresh`, {
         method: 'POST',
         credentials: 'include',
       });
@@ -80,7 +112,7 @@ export async function apiRequest<T = any>(
         headers.set('Authorization', `Bearer ${refreshData.accessToken}`);
 
         // Retry initial request
-        const retryRes = await fetch(url, {
+        const retryRes = await fetchApi(url, {
           ...options,
           headers,
           credentials: 'include',

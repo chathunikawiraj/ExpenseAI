@@ -11,6 +11,8 @@ import {
 } from '../utils/jwt';
 import type { TokenPayload } from '../utils/jwt';
 import type { RegisterInput, UpdateProfileInput } from '../validators/auth.validator';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const VERIFICATION_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
@@ -314,4 +316,48 @@ export async function updateUserProfile(
   }
 
   return toPublicUser(updatedUser);
+}
+
+export async function changeAuthenticatedPassword(
+  userId: string,
+  input: { currentPassword: string; newPassword: string }
+): Promise<void> {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) throw new AuthError('User not found.', 404, 'USER_NOT_FOUND');
+  if (!(await bcrypt.compare(input.currentPassword, user.passwordHash))) {
+    throw new AuthError('Current password is incorrect.', 400, 'INVALID_CURRENT_PASSWORD');
+  }
+  if (await bcrypt.compare(input.newPassword, user.passwordHash)) {
+    throw new AuthError('New password must differ from the current password.', 400, 'PASSWORD_UNCHANGED');
+  }
+
+  const passwordHash = await bcrypt.hash(input.newPassword, SALT_ROUNDS);
+  const now = new Date();
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash },
+    }),
+    prisma.refreshToken.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: now },
+    }),
+  ]);
+}
+
+export async function deleteAuthenticatedAccount(userId: string): Promise<void> {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) throw new AuthError('User not found.', 404, 'USER_NOT_FOUND');
+  const receipts = await prisma.receipt.findMany({
+    where: { userId },
+    select: { id: true },
+  });
+  const uploadsDirectory = path.resolve(process.cwd(), 'uploads');
+  if (fs.existsSync(uploadsDirectory)) {
+    for (const receipt of receipts) {
+      const fileName = fs.readdirSync(uploadsDirectory).find((name) => name.startsWith(receipt.id));
+      if (fileName) fs.unlinkSync(path.join(uploadsDirectory, fileName));
+    }
+  }
+  await prisma.user.delete({ where: { id: userId } });
 }

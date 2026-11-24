@@ -129,6 +129,24 @@ test('expense CRUD validates categories, filters results, and isolates users', a
     assert.equal(listed.data[0].id, second.id);
     assert.equal(listed.data[0].amount, 30);
 
+    const createdAtSortResponse = await fetch(
+      `${baseUrl}?sortBy=createdAt&order=asc&page=1&limit=10`,
+      { headers }
+    );
+    assert.equal(createdAtSortResponse.status, 200);
+
+    const invalidRangeResponse = await fetch(
+      `${baseUrl}?startDate=2026-06-10&endDate=2026-06-08`,
+      { headers }
+    );
+    assert.equal(invalidRangeResponse.status, 400);
+
+    const invalidSortResponse = await fetch(`${baseUrl}?sortBy=title`, { headers });
+    assert.equal(invalidSortResponse.status, 400);
+
+    const invalidDateResponse = await fetch(`${baseUrl}?startDate=2026-13-01`, { headers });
+    assert.equal(invalidDateResponse.status, 400);
+
     const readResponse = await fetch(`${baseUrl}/${first.id}`, { headers });
     assert.equal(readResponse.status, 200);
     assert.equal((await readResponse.json() as { id: string }).id, first.id);

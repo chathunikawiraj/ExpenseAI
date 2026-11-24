@@ -12,7 +12,6 @@ import {
   BrainCircuit,
   Lock
 } from 'lucide-react';
-import { mockInsights } from '../data/mockData';
 import { insightsApi } from '../services/apiService';
 import { InsightItem } from '../types';
 import { getAccessToken } from '../services/api';
@@ -20,7 +19,7 @@ import { ResourceStatus } from '../components/common/ResourceStatus';
 
 export const AiInsightsPage: React.FC = () => {
   const { showToast } = useToast();
-  const [insights, setInsights] = useState<InsightItem[]>(mockInsights);
+  const [insights, setInsights] = useState<InsightItem[]>([]);
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [isLoading, setIsLoading] = useState(Boolean(getAccessToken()));
   const [loadError, setLoadError] = useState<string | null>(null);

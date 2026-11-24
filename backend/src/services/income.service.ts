@@ -28,6 +28,14 @@ export const getIncomes = async (userId: string, query: IncomeQuery) => {
     ...(query.source
       ? { source: { contains: query.source, mode: 'insensitive' } }
       : {}),
+    ...(query.search
+      ? {
+          OR: [
+            { source: { contains: query.search, mode: 'insensitive' } },
+            { description: { contains: query.search, mode: 'insensitive' } },
+          ],
+        }
+      : {}),
     ...(query.startDate || query.endDate
       ? {
           date: {
@@ -38,11 +46,17 @@ export const getIncomes = async (userId: string, query: IncomeQuery) => {
       : {}),
   };
   const skip = (query.page - 1) * query.limit;
+  const orderBy: Prisma.IncomeOrderByWithRelationInput =
+    query.sortBy === 'amount'
+      ? { amount: query.sortOrder }
+      : query.sortBy === 'createdAt'
+        ? { createdAt: query.sortOrder }
+        : { date: query.sortOrder };
 
   const [incomes, total] = await Promise.all([
     prisma.income.findMany({
       where,
-      orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+      orderBy,
       skip,
       take: query.limit,
     }),

@@ -56,3 +56,14 @@ export const resetPasswordSchema = z.object({
   token: z.string().regex(/^[a-f0-9]{64}$/i),
   newPassword: passwordSchema,
 });
+
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(72),
+  newPassword: passwordSchema,
+}).strict();
+
+export const deleteAccountSchema = z.object({
+  confirmation: z.literal('DELETE'),
+}).strict();
+
+export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
