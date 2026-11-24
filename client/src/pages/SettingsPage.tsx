@@ -80,7 +80,7 @@ export const SettingsPage: React.FC = () => {
     }
   };
 
-  const handleUpdatePassword = (e: React.FormEvent) => {
+  const handleUpdatePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     if (newPassword.length < 8) {
       showToast('New password must have at least 8 characters (FR-01).', 'error');
@@ -90,7 +90,24 @@ export const SettingsPage: React.FC = () => {
       showToast('Passwords do not match.', 'error');
       return;
     }
-    showToast('Password changes are not connected to a backend endpoint yet.', 'error');
+    if (!currentPassword) {
+      showToast('Enter your current password.', 'error');
+      return;
+    }
+    setIsSaving(true);
+    try {
+      await authApi.changePassword(currentPassword, newPassword);
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      showToast('Password changed. Please sign in again for security.', 'success');
+      await logout();
+      navigate('/login');
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not change your password.', 'error');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleDeleteAccount = async () => {

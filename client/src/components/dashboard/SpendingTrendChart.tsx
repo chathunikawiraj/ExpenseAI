@@ -9,7 +9,7 @@ import {
 import { ChevronDown, ArrowDownLeft, ArrowUpRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { CardActionMenu } from '../common/CardActionMenu';
-import { Expense, Income } from '../../types';
+import { AnalyticsTrends, Expense, Income } from '../../types';
 
 type Period = 'This week' | 'This month' | 'This year';
 
@@ -22,6 +22,7 @@ interface TrendPoint {
 interface SpendingTrendChartProps {
   incomes: Income[];
   expenses: Expense[];
+  analyticsTrends?: AnalyticsTrends | null;
 }
 
 const buildTrend = (period: Period, incomes: Income[], expenses: Expense[]) => {
@@ -102,11 +103,53 @@ const buildTrend = (period: Period, incomes: Income[], expenses: Expense[]) => {
 export const SpendingTrendChart: React.FC<SpendingTrendChartProps> = ({
   incomes,
   expenses,
+  analyticsTrends,
 }) => {
   const navigate = useNavigate();
   const [period, setPeriod] = useState<Period>('This week');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-  const periodData = useMemo(() => buildTrend(period, incomes, expenses), [period, incomes, expenses]);
+  const periodData = useMemo(() => {
+    if (!analyticsTrends) return buildTrend(period, incomes, expenses);
+    if (period === 'This year') {
+      const trend = analyticsTrends.monthly.map((item) => {
+        const monthNumber = Number(item.month.slice(5, 7));
+        const label = new Date(Date.UTC(2000, monthNumber - 1, 1))
+          .toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' });
+        return { label, income: item.income, expense: item.expense };
+      });
+      return {
+        trend,
+        incomeTotal: trend.reduce((total, item) => total + item.income, 0),
+        expenseTotal: trend.reduce((total, item) => total + item.expense, 0),
+        activePeriods: trend.filter((item) => item.income > 0 || item.expense > 0).length,
+      };
+    }
+    const now = new Date();
+    const filtered = analyticsTrends.daily.filter((item) => {
+      if (period === 'This week') {
+        const cutoff = new Date(now);
+        cutoff.setUTCDate(cutoff.getUTCDate() - 6);
+        return item.date >= cutoff.toISOString().slice(0, 10);
+      }
+      return item.date.slice(0, 7) === now.toISOString().slice(0, 7);
+    });
+    const trend = filtered.map((item) => ({
+      label: period === 'This month'
+        ? String(Number(item.date.slice(8, 10)))
+        : new Date(`${item.date}T00:00:00Z`).toLocaleDateString('en-US', {
+            weekday: 'short',
+            timeZone: 'UTC',
+          }),
+      income: 0,
+      expense: item.expense,
+    }));
+    return {
+      trend,
+      incomeTotal: 0,
+      expenseTotal: trend.reduce((total, item) => total + item.expense, 0),
+      activePeriods: trend.filter((item) => item.expense > 0).length,
+    };
+  }, [period, incomes, expenses, analyticsTrends]);
   const periodUnit = period === 'This year' ? 'months' : 'days';
 
   return (

@@ -1,5 +1,4 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState, ReactNode } from 'react';
-import { mockNotifications } from '../data/mockData';
 import { NotificationItem } from '../types';
 import { getAccessToken } from '../services/api';
 import { budgetsApi } from '../services/apiService';
@@ -17,7 +16,7 @@ interface NotificationContextValue {
 const NotificationContext = createContext<NotificationContextValue | undefined>(undefined);
 
 export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [notifications, setNotifications] = useState<NotificationItem[]>(mockNotifications);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [isLoading, setIsLoading] = useState(Boolean(getAccessToken()));
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -59,16 +58,13 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
   }, []);
 
   const markAllAsRead = useCallback(async () => {
-    const unreadItems = notifications.filter((item) => !item.isRead);
     try {
-      if (getAccessToken()) {
-        await Promise.all(unreadItems.map((item) => budgetsApi.markNotificationRead(item.id)));
-      }
+      if (getAccessToken()) await budgetsApi.markAllNotificationsRead();
       setNotifications((items) => items.map((item) => ({ ...item, isRead: true })));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not update the notifications.');
     }
-  }, [notifications]);
+  }, []);
   const reload = useCallback(() => setReloadKey((key) => key + 1), []);
 
   const value = useMemo(

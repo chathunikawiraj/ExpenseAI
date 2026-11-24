@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { AppShell } from '../components/layout/AppShell';
 import { Modal } from '../components/common/Modal';
@@ -13,18 +13,12 @@ import {
   Trash2,
   Edit2,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Tags,
 } from 'lucide-react';
-import {
-  mockExpenses,
-  mockIncomes,
-  mockCategories,
-} from '../data/mockData';
 import { Expense, Income, PaymentMethod } from '../types';
-import { getAccessToken } from '../services/api';
 import { transactionsApi } from '../services/apiService';
 import { ResourceStatus } from '../components/common/ResourceStatus';
-import { mockUser } from '../data/mockData';
 
 interface TransactionRow {
   id: string;
@@ -34,8 +28,10 @@ interface TransactionRow {
   type: 'expense' | 'income';
   category?: string;
   categoryColor?: string;
+  categoryId?: string;
   paymentMethod?: string;
   description?: string;
+  createdAt: string;
 }
 
 export const TransactionsPage: React.FC = () => {
@@ -47,16 +43,20 @@ export const TransactionsPage: React.FC = () => {
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>('all');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
-  const [sortBy, setSortBy] = useState<'date' | 'amount'>('date');
+  const [sortBy, setSortBy] = useState<'date' | 'amount' | 'createdAt'>('date');
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 20;
 
-  // Local state for interactive CRUD
-  const [expensesList, setExpensesList] = useState<Expense[]>(mockExpenses);
-  const [incomesList, setIncomesList] = useState<Income[]>(mockIncomes);
-  const [categories, setCategories] = useState(mockCategories);
-  const [isLoading, setIsLoading] = useState(Boolean(getAccessToken()));
+  const [expensesList, setExpensesList] = useState<Expense[]>([]);
+  const [incomesList, setIncomesList] = useState<Income[]>([]);
+  const [unifiedList, setUnifiedList] = useState<TransactionRow[]>([]);
+  const [categories, setCategories] = useState<Awaited<ReturnType<typeof transactionsApi.getCategories>>>([]);
+  const [totalRecords, setTotalRecords] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [refreshCount, setRefreshCount] = useState(0);
+  const requestVersion = useRef(0);
+  const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -64,6 +64,9 @@ export const TransactionsPage: React.FC = () => {
   // Modals state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  const [categoryName, setCategoryName] = useState('');
+  const [isCategorySaving, setIsCategorySaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; type: 'expense' | 'income' } | null>(null);
   const [editTarget, setEditTarget] = useState<{ id: string; type: 'expense' | 'income' } | null>(null);
 
@@ -72,115 +75,170 @@ export const TransactionsPage: React.FC = () => {
   const [formTitle, setFormTitle] = useState('');
   const [formAmount, setFormAmount] = useState('');
   const [formDate, setFormDate] = useState(new Date().toISOString().split('T')[0]);
-  const [formCategory, setFormCategory] = useState(mockCategories[0].id);
+  const [formCategory, setFormCategory] = useState('');
   const [formPaymentMethod, setFormPaymentMethod] = useState<PaymentMethod>('DEBIT_CARD');
   const [formDescription, setFormDescription] = useState('');
 
-  useEffect(() => {
-    if (!getAccessToken()) {
-      setIsLoading(false);
-      return;
-    }
-
-    let active = true;
-    Promise.all([
-      transactionsApi.getExpenses({ limit: 100 }),
-      transactionsApi.getIncomes({ limit: 100 }),
-      transactionsApi.getCategories(),
-    ])
-      .then(([expenses, incomes, nextCategories]) => {
-        if (!active) return;
-        setExpensesList(expenses.data);
-        setIncomesList(incomes.data);
-        setCategories(nextCategories);
-      })
-      .catch((cause: unknown) => {
-        if (active) {
-          setLoadError(cause instanceof Error ? cause.message : 'The server request failed.');
-        }
-      })
-      .finally(() => {
-        if (active) setIsLoading(false);
-      });
-
-    return () => {
-      active = false;
+  const loadTransactions = useCallback(async () => {
+    const pageLimit = itemsPerPage;
+    const commonParams = {
+      startDate: startDate || undefined,
+      endDate: endDate || undefined,
+      search: searchTerm.trim() || undefined,
+      sortBy,
+      order: sortOrder,
+      page: currentPage,
+      limit: pageLimit,
     };
-  }, []);
+    const emptyPage = {
+      data: [],
+      meta: { total: 0, page: currentPage, limit: pageLimit, totalPages: 0 },
+    };
+    const requestId = ++requestVersion.current;
+    const isCurrentRequest = () => requestVersion.current === requestId;
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      if (activeTab === 'all') {
+        const transactionType =
+          selectedCategory === 'income'
+            ? 'income'
+            : selectedCategory !== 'all' || selectedPaymentMethod !== 'all'
+              ? 'expense'
+              : 'all';
+        const [transactions, nextCategories] = await Promise.all([
+          transactionsApi.getTransactions({
+            ...commonParams,
+            type: transactionType,
+            categoryId: selectedCategory === 'all' || selectedCategory === 'income'
+              ? undefined
+              : selectedCategory,
+            paymentMethod: selectedPaymentMethod === 'all'
+              ? undefined
+              : selectedPaymentMethod,
+          }),
+          transactionsApi.getCategories(),
+        ]);
+        if (!isCurrentRequest()) return;
+        setUnifiedList(transactions.data.map((transaction) => ({
+          id: transaction.id,
+          title: transaction.title,
+          amount: transaction.amount,
+          date: transaction.date,
+          type: transaction.type,
+          category: transaction.category?.name || (transaction.type === 'income' ? 'Income' : 'Uncategorized'),
+          categoryColor: transaction.category?.color || (transaction.type === 'income' ? '#4BC9A2' : '#9275F5'),
+          categoryId: transaction.categoryId,
+          paymentMethod: transaction.paymentMethod ?? undefined,
+          description: transaction.description,
+          createdAt: transaction.createdAt,
+        })));
+        setExpensesList([]);
+        setIncomesList([]);
+        setCategories(nextCategories);
+        setTotalRecords(transactions.meta.total);
+        setTotalPages(Math.max(1, transactions.meta.totalPages));
+        if (!categories.length && nextCategories.length) {
+          setFormCategory((current) => current || nextCategories[0].id);
+        }
+        return;
+      }
+
+      const includeExpenses = activeTab === 'expenses';
+      const includeIncomes = activeTab === 'incomes';
+      const [expenses, incomes, nextCategories] = await Promise.all([
+        includeExpenses
+          ? transactionsApi.getExpenses({
+              ...commonParams,
+              categoryId: selectedCategory === 'all' || selectedCategory === 'income'
+                ? undefined
+                : selectedCategory,
+              paymentMethod: selectedPaymentMethod === 'all' ? undefined : selectedPaymentMethod,
+            })
+          : Promise.resolve(emptyPage),
+        includeIncomes
+          ? transactionsApi.getIncomes(commonParams)
+          : Promise.resolve(emptyPage),
+        transactionsApi.getCategories(),
+      ]);
+      if (!isCurrentRequest()) return;
+      setExpensesList(expenses.data);
+      setIncomesList(incomes.data);
+      setCategories(nextCategories);
+      setTotalRecords(expenses.meta.total + incomes.meta.total);
+      setTotalPages(Math.max(1, expenses.meta.totalPages, incomes.meta.totalPages));
+      if (!categories.length && nextCategories.length) {
+        setFormCategory((current) => current || nextCategories[0].id);
+      }
+    } catch (cause) {
+      if (isCurrentRequest()) {
+        setLoadError(cause instanceof Error ? cause.message : 'The server request failed.');
+        setExpensesList([]);
+        setIncomesList([]);
+        setUnifiedList([]);
+        setTotalRecords(0);
+        setTotalPages(1);
+      }
+    } finally {
+      if (isCurrentRequest()) setIsLoading(false);
+    }
+  }, [
+    activeTab,
+    categories.length,
+    currentPage,
+    endDate,
+    itemsPerPage,
+    searchTerm,
+    selectedCategory,
+    selectedPaymentMethod,
+    sortBy,
+    sortOrder,
+    startDate,
+  ]);
+
+  useEffect(() => {
+    void loadTransactions();
+  }, [loadTransactions, refreshCount]);
 
   // Combined list with unified fields
   const unifiedTransactions = useMemo(() => {
+    if (activeTab === 'all') return unifiedList;
+
     const list: TransactionRow[] = [];
 
-    if (activeTab === 'all' || activeTab === 'expenses') {
-      expensesList.forEach((e) => {
-        const cat = categories.find((c) => c.id === e.categoryId) || e.category;
-        list.push({
-          id: e.id,
-          title: e.title,
-          amount: e.amount,
-          date: e.date,
-          type: 'expense',
-          category: cat?.name || 'Uncategorized',
-          categoryColor: cat?.color || '#9275F5',
-          paymentMethod: e.paymentMethod ?? undefined,
-          description: e.description ?? undefined,
-        });
+    expensesList.forEach((expense) => {
+      const category = categories.find((item) => item.id === expense.categoryId) || expense.category;
+      list.push({
+        id: expense.id,
+        title: expense.title,
+        amount: expense.amount,
+        date: expense.date,
+        type: 'expense',
+        category: category?.name || 'Uncategorized',
+        categoryColor: category?.color || '#9275F5',
+        categoryId: expense.categoryId,
+        paymentMethod: expense.paymentMethod ?? undefined,
+        description: expense.description ?? undefined,
+        createdAt: expense.createdAt,
       });
-    }
-
-    if (activeTab === 'all' || activeTab === 'incomes') {
-      incomesList.forEach((i) => {
-        list.push({
-          id: i.id,
-          title: i.source,
-          amount: i.amount,
-          date: i.date,
-          type: 'income',
-          category: 'Income',
-          categoryColor: '#4BC9A2',
-          paymentMethod: 'Direct Deposit',
-          description: i.description ?? undefined,
-        });
-      });
-    }
-
-    // Filter by search
-    let filtered = list.filter((t) =>
-      t.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (t.description && t.description.toLowerCase().includes(searchTerm.toLowerCase()))
-    );
-
-    // Filter by Category
-    if (selectedCategory !== 'all') {
-      filtered = filtered.filter((t) => t.category === selectedCategory);
-    }
-
-    // Filter by Payment method
-    if (selectedPaymentMethod !== 'all') {
-      filtered = filtered.filter((t) => t.paymentMethod === selectedPaymentMethod);
-    }
-
-    if (startDate) {
-      filtered = filtered.filter((transaction) => transaction.date.slice(0, 10) >= startDate);
-    }
-
-    if (endDate) {
-      filtered = filtered.filter((transaction) => transaction.date.slice(0, 10) <= endDate);
-    }
-
-    // Sort
-    filtered.sort((a, b) => {
-      if (sortBy === 'date') {
-        const diff = new Date(b.date).getTime() - new Date(a.date).getTime();
-        return sortOrder === 'desc' ? diff : -diff;
-      } else {
-        return sortOrder === 'desc' ? b.amount - a.amount : a.amount - b.amount;
-      }
     });
 
-    return filtered;
-  }, [activeTab, expensesList, incomesList, categories, searchTerm, selectedCategory, selectedPaymentMethod, startDate, endDate, sortBy, sortOrder]);
+    incomesList.forEach((income) => {
+      list.push({
+        id: income.id,
+        title: income.source,
+        amount: income.amount,
+        date: income.date,
+        type: 'income',
+        category: 'Income',
+        categoryColor: '#4BC9A2',
+        description: income.description ?? undefined,
+        createdAt: income.createdAt,
+      });
+    });
+
+    return list;
+  }, [activeTab, unifiedList, expensesList, incomesList, categories]);
 
   const transactionSummary = useMemo(
     () =>
@@ -213,12 +271,8 @@ export const TransactionsPage: React.FC = () => {
   };
 
   // Pagination calculation
-  const totalPages = Math.max(1, Math.ceil(unifiedTransactions.length / itemsPerPage));
   const page = Math.min(currentPage, totalPages);
-  const currentItems = unifiedTransactions.slice(
-    (page - 1) * itemsPerPage,
-    page * itemsPerPage
-  );
+  const currentItems = unifiedTransactions;
 
   const handleSaveTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -231,85 +285,40 @@ export const TransactionsPage: React.FC = () => {
     setIsSaving(true);
     try {
       if (formType === 'expense') {
-        const payload: Partial<Expense> = {
+        const payload = {
           title: formTitle.trim(),
           amount: parsedAmount,
           date: formDate,
           categoryId: formCategory,
           paymentMethod: formPaymentMethod,
           description: formDescription.trim(),
-          recurring: 'NONE',
         };
-        const category = categories.find((item) => item.id === formCategory);
-
-        if (getAccessToken()) {
-          const saved = editTarget?.type === 'expense'
-            ? await transactionsApi.updateExpense(editTarget.id, payload)
-            : await transactionsApi.createExpense(payload);
-          const normalized = { ...saved, category: category || saved.category };
-          setExpensesList((items) =>
-            editTarget?.type === 'expense'
-              ? items.map((item) => (item.id === editTarget.id ? normalized : item))
-              : [normalized, ...items],
-          );
-        } else if (editTarget?.type === 'expense') {
-          setExpensesList((items) =>
-            items.map((item) => (item.id === editTarget.id ? { ...item, ...payload, category } : item)),
-          );
+        if (!formCategory) {
+          showToast('Create or choose an expense category first.', 'error');
+          return;
+        }
+        if (editTarget?.type === 'expense') {
+          await transactionsApi.updateExpense(editTarget.id, payload);
         } else {
-          const newExpense: Expense = {
-            id: `exp_${Date.now()}`,
-            userId: mockUser.id,
-            title: formTitle.trim(),
-            amount: parsedAmount,
-            date: formDate,
-            categoryId: formCategory,
-            category,
-            paymentMethod: formPaymentMethod,
-            description: formDescription.trim(),
-            recurring: 'NONE',
-            createdAt: new Date().toISOString(),
-          };
-          setExpensesList((items) => [newExpense, ...items]);
+          await transactionsApi.createExpense(payload);
         }
       } else {
-        const payload: Partial<Income> = {
+        const payload = {
           source: formTitle.trim(),
           amount: parsedAmount,
           date: formDate,
           description: formDescription.trim(),
-          recurring: 'NONE',
         };
-
-        if (getAccessToken()) {
-          const saved = editTarget?.type === 'income'
-            ? await transactionsApi.updateIncome(editTarget.id, payload)
-            : await transactionsApi.createIncome(payload);
-          setIncomesList((items) =>
-            editTarget?.type === 'income'
-              ? items.map((item) => (item.id === editTarget.id ? saved : item))
-              : [saved, ...items],
-          );
-        } else if (editTarget?.type === 'income') {
-          setIncomesList((items) =>
-            items.map((item) => (item.id === editTarget.id ? { ...item, ...payload } : item)),
-          );
+        if (editTarget?.type === 'income') {
+          await transactionsApi.updateIncome(editTarget.id, payload);
         } else {
-          const newIncome: Income = {
-            id: `inc_${Date.now()}`,
-            userId: mockUser.id,
-            source: formTitle.trim(),
-            amount: parsedAmount,
-            date: formDate,
-            description: formDescription.trim(),
-            recurring: 'NONE',
-            createdAt: new Date().toISOString(),
-          };
-          setIncomesList((items) => [newIncome, ...items]);
+          await transactionsApi.createIncome(payload);
         }
       }
 
       setIsAddModalOpen(false);
+      setCurrentPage(1);
+      setRefreshCount((count) => count + 1);
       showToast(`${editTarget ? 'Transaction updated' : 'Transaction added'} successfully.`, 'success');
       if (!editTarget) {
         setActiveTab('all');
@@ -326,12 +335,50 @@ export const TransactionsPage: React.FC = () => {
     }
   };
 
+  const handleCreateCategory = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const name = categoryName.trim();
+    if (name.length < 2 || name.length > 80) {
+      showToast('Category names must contain 2 to 80 characters.', 'error');
+      return;
+    }
+
+    setIsCategorySaving(true);
+    try {
+      const created = await transactionsApi.createCategory({ name });
+      setCategories((current) => [...current, created].sort((a, b) => a.name.localeCompare(b.name)));
+      setFormCategory(created.id);
+      setCategoryName('');
+      showToast('Category created successfully.', 'success');
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not create this category.', 'error');
+    } finally {
+      setIsCategorySaving(false);
+    }
+  };
+
+  const handleDeleteCategory = async (id: string) => {
+    setIsCategorySaving(true);
+    try {
+      await transactionsApi.deleteCategory(id);
+      setCategories((current) => current.filter((category) => category.id !== id));
+      setFormCategory((current) => current === id ? '' : current);
+      setSelectedCategory((current) => current === id ? 'all' : current);
+      setRefreshCount((count) => count + 1);
+      showToast('Category deleted successfully.', 'success');
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not delete this category.', 'error');
+    } finally {
+      setIsCategorySaving(false);
+    }
+  };
+
   const resetForm = () => {
     setFormTitle('');
     setFormAmount('');
     setFormDescription('');
     setFormDate(new Date().toISOString().split('T')[0]);
-    setFormCategory(categories[0]?.id || mockCategories[0].id);
+    setFormCategory(categories[0]?.id || '');
     setFormPaymentMethod('DEBIT_CARD');
     setFormType('expense');
     setEditTarget(null);
@@ -351,6 +398,9 @@ export const TransactionsPage: React.FC = () => {
     setFormDescription(transaction.description || '');
 
     if (transaction.type === 'expense') {
+      if (transaction.categoryId) {
+        setFormCategory(transaction.categoryId);
+      }
       const expense = expensesList.find((item) => item.id === transaction.id);
       if (expense) {
         setFormCategory(expense.categoryId);
@@ -365,17 +415,11 @@ export const TransactionsPage: React.FC = () => {
     if (!deleteTarget) return;
     setIsDeleting(true);
     try {
-      if (getAccessToken()) {
-        if (deleteTarget.type === 'expense') await transactionsApi.deleteExpense(deleteTarget.id);
-        else await transactionsApi.deleteIncome(deleteTarget.id);
-      }
-      if (deleteTarget.type === 'expense') {
-        setExpensesList((expenses) => expenses.filter((expense) => expense.id !== deleteTarget.id));
-      } else {
-        setIncomesList((incomes) => incomes.filter((income) => income.id !== deleteTarget.id));
-      }
+      if (deleteTarget.type === 'expense') await transactionsApi.deleteExpense(deleteTarget.id);
+      else await transactionsApi.deleteIncome(deleteTarget.id);
       setIsDeleteModalOpen(false);
       setDeleteTarget(null);
+      setRefreshCount((count) => count + 1);
       showToast('Transaction deleted.', 'success');
     } catch (cause) {
       showToast(cause instanceof Error ? cause.message : 'Could not delete this transaction.', 'error');
@@ -400,52 +444,47 @@ export const TransactionsPage: React.FC = () => {
         <ResourceStatus
           isLoading={isLoading}
           error={loadError}
-          onRetry={() => {
-            setLoadError(null);
-            setIsLoading(true);
-            Promise.all([
-              transactionsApi.getExpenses({ limit: 100 }),
-              transactionsApi.getIncomes({ limit: 100 }),
-              transactionsApi.getCategories(),
-            ])
-              .then(([expenses, incomes, nextCategories]) => {
-                setExpensesList(expenses.data);
-                setIncomesList(incomes.data);
-                setCategories(nextCategories);
-              })
-              .catch((cause: unknown) => setLoadError(cause instanceof Error ? cause.message : 'The server request failed.'))
-              .finally(() => setIsLoading(false));
-          }}
+          onRetry={() => setRefreshCount((count) => count + 1)}
         />
 
-        <button
-          onClick={openAddModal}
-          className="px-6 py-3 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow transition-all flex items-center gap-2"
-        >
-          <Plus className="w-4 h-4 stroke-[2.5]" />
-          <span>Add Transaction</span>
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setIsCategoryModalOpen(true)}
+            className="px-5 py-3 bg-white hover:bg-primary-light text-primary text-xs font-bold rounded-full border border-purple-100 transition-all flex items-center gap-2"
+          >
+            <Tags className="w-4 h-4" />
+            <span>Manage Categories</span>
+          </button>
+          <button
+            onClick={openAddModal}
+            className="px-6 py-3 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow transition-all flex items-center gap-2"
+          >
+            <Plus className="w-4 h-4 stroke-[2.5]" />
+            <span>Add Transaction</span>
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="card-hover bg-white rounded-3xl p-5 shadow-comet border border-purple-100/60">
           <p className="text-[11px] font-bold uppercase tracking-wide text-navy-muted">Matching records</p>
-          <p className="mt-2 text-2xl font-extrabold text-navy">{transactionSummary.count}</p>
-          <p className="mt-1 text-[11px] text-navy-muted">Updates with your current filters</p>
+          <p className="mt-2 text-2xl font-extrabold text-navy">{totalRecords}</p>
+          <p className="mt-1 text-[11px] text-navy-muted">Matching records across all pages</p>
         </div>
         <div className="card-hover bg-white rounded-3xl p-5 shadow-comet border border-emerald-100/60">
           <p className="text-[11px] font-bold uppercase tracking-wide text-navy-muted">Income</p>
           <p className="mt-2 text-2xl font-extrabold text-emerald-600">
             ${transactionSummary.income.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
-          <p className="mt-1 text-[11px] text-navy-muted">In the current result set</p>
+          <p className="mt-1 text-[11px] text-navy-muted">Income on this page</p>
         </div>
         <div className="card-hover bg-white rounded-3xl p-5 shadow-comet border border-rose-100/60">
           <p className="text-[11px] font-bold uppercase tracking-wide text-navy-muted">Expenses</p>
           <p className="mt-2 text-2xl font-extrabold text-rose-500">
             ${transactionSummary.expense.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
-          <p className="mt-1 text-[11px] text-navy-muted">In the current result set</p>
+          <p className="mt-1 text-[11px] text-navy-muted">Expenses on this page</p>
         </div>
       </div>
 
@@ -459,6 +498,8 @@ export const TransactionsPage: React.FC = () => {
                 key={tab}
                 onClick={() => {
                   setActiveTab(tab);
+                  setSelectedCategory('all');
+                  setSelectedPaymentMethod('all');
                   setCurrentPage(1);
                 }}
                 className={`px-4 py-1.5 rounded-full text-xs font-bold capitalize transition-all ${
@@ -503,11 +544,13 @@ export const TransactionsPage: React.FC = () => {
               setSelectedCategory(e.target.value);
               setCurrentPage(1);
             }}
-            className="px-3 py-1.5 bg-[#F8F9FE] border border-gray-200 rounded-full text-xs font-semibold text-navy focus:outline-none"
+            disabled={activeTab === 'incomes'}
+            className="px-3 py-1.5 bg-[#F8F9FE] border border-gray-200 rounded-full text-xs font-semibold text-navy focus:outline-none disabled:opacity-50"
           >
             <option value="all">All Categories</option>
+            {activeTab === 'all' && <option value="income">Income</option>}
             {categories.map((c) => (
-              <option key={c.id} value={c.name}>
+              <option key={c.id} value={c.id}>
                 {c.name}
               </option>
             ))}
@@ -520,7 +563,8 @@ export const TransactionsPage: React.FC = () => {
               setSelectedPaymentMethod(e.target.value);
               setCurrentPage(1);
             }}
-            className="px-3 py-1.5 bg-[#F8F9FE] border border-gray-200 rounded-full text-xs font-semibold text-navy focus:outline-none"
+            disabled={activeTab === 'incomes'}
+            className="px-3 py-1.5 bg-[#F8F9FE] border border-gray-200 rounded-full text-xs font-semibold text-navy focus:outline-none disabled:opacity-50"
           >
             <option value="all">All Payment Methods</option>
             <option value="DEBIT_CARD">Debit Card</option>
@@ -596,12 +640,29 @@ export const TransactionsPage: React.FC = () => {
             >
               Amount {sortBy === 'amount' && (sortOrder === 'desc' ? '↓' : '↑')}
             </button>
+            <button
+              onClick={() => {
+                if (sortBy === 'createdAt') {
+                  setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc');
+                } else {
+                  setSortBy('createdAt');
+                  setSortOrder('desc');
+                }
+              }}
+              className={`px-3 py-1 rounded-full text-xs font-semibold border ${
+                sortBy === 'createdAt'
+                  ? 'bg-primary-light text-primary border-purple-200'
+                  : 'bg-white text-navy-muted border-gray-200'
+              }`}
+            >
+              Created {sortBy === 'createdAt' && (sortOrder === 'desc' ? '↓' : '↑')}
+            </button>
           </div>
         </div>
 
         <div className="flex items-center justify-between gap-3 text-[11px] text-navy-muted">
           <span>
-            Showing {unifiedTransactions.length} matching {unifiedTransactions.length === 1 ? 'transaction' : 'transactions'}
+            Showing {currentItems.length} of {totalRecords} matching records
           </span>
           {hasActiveFilters && (
             <button
@@ -753,12 +814,10 @@ export const TransactionsPage: React.FC = () => {
           </table>
         </div>
 
-        {/* Pagination (20 items per page according to FR-09, FR-11) */}
+        {/* Results are fetched using the backend's pagination metadata. */}
         <div className="flex items-center justify-between pt-4 mt-2 border-t border-gray-100 text-xs">
           <span className="text-navy-muted">
-            Showing {unifiedTransactions.length === 0 ? 0 : (page - 1) * itemsPerPage + 1} to{' '}
-            {Math.min(page * itemsPerPage, unifiedTransactions.length)} of{' '}
-            {unifiedTransactions.length} records (20 / page)
+            {currentItems.length} records on this page · {totalRecords} total matching records
           </span>
 
           <div className="flex items-center gap-2">
@@ -782,6 +841,61 @@ export const TransactionsPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Category Management Modal */}
+      <Modal
+        isOpen={isCategoryModalOpen}
+        onClose={() => {
+          if (!isCategorySaving) setIsCategoryModalOpen(false);
+        }}
+        title="Manage Categories"
+        subtitle="Default categories are shared; custom categories belong to your account."
+      >
+        <form onSubmit={handleCreateCategory} className="flex gap-2">
+          <input
+            type="text"
+            maxLength={80}
+            required
+            value={categoryName}
+            onChange={(event) => setCategoryName(event.target.value)}
+            placeholder="New category name"
+            className="min-w-0 flex-1 px-4 py-2.5 bg-[#F8F9FE] text-xs font-medium text-navy rounded-2xl border border-gray-200 focus:outline-none focus:border-primary"
+          />
+          <button
+            type="submit"
+            disabled={isCategorySaving}
+            className="px-4 py-2.5 bg-primary text-white text-xs font-bold rounded-full disabled:opacity-60"
+          >
+            Add
+          </button>
+        </form>
+        <div className="mt-4 max-h-72 overflow-y-auto divide-y divide-gray-100">
+          {categories.map((category) => (
+            <div key={category.id} className="flex items-center justify-between gap-3 py-3">
+              <div>
+                <p className="text-sm font-semibold text-navy">{category.name}</p>
+                <p className="text-[10px] text-navy-muted">
+                  {category.isDefault ? 'Default category' : 'Custom category'}
+                </p>
+              </div>
+              {!category.isDefault && (
+                <button
+                  type="button"
+                  disabled={isCategorySaving}
+                  onClick={() => void handleDeleteCategory(category.id)}
+                  className="p-2 text-navy-muted hover:text-rose-500 disabled:opacity-50"
+                  aria-label={`Delete ${category.name}`}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          ))}
+          {categories.length === 0 && (
+            <p className="py-5 text-center text-xs text-navy-muted">No categories are available.</p>
+          )}
+        </div>
+      </Modal>
 
       {/* Add Transaction Modal */}
       <Modal

@@ -20,7 +20,7 @@ export const ResourceStatus: React.FC<ResourceStatusProps> = ({ isLoading, error
   if (error) {
     return (
       <div role="alert" className="flex flex-col gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900 sm:flex-row sm:items-center sm:justify-between">
-        <span>Could not load live data. Showing sample data instead. {error}</span>
+        <span>Could not load live data. {error}</span>
         {onRetry && (
           <button
             type="button"

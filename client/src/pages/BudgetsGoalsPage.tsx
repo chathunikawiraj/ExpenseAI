@@ -14,40 +14,32 @@ import {
   TrendingUp,
   DollarSign
 } from 'lucide-react';
-import {
-  mockBudgets,
-  mockSavingsGoals,
-  mockCategories,
-} from '../data/mockData';
-import { Budget, SavingsGoal } from '../types';
-import { getAccessToken } from '../services/api';
-import { budgetsApi } from '../services/apiService';
-import { mockUser } from '../data/mockData';
+import { Budget, SavingsGoal, Category } from '../types';
+import { budgetsApi, transactionsApi } from '../services/apiService';
 import { ResourceStatus } from '../components/common/ResourceStatus';
 
 export const BudgetsGoalsPage: React.FC = () => {
   const { showToast } = useToast();
-  const [budgets, setBudgets] = useState<Budget[]>(mockBudgets);
-  const [goals, setGoals] = useState<SavingsGoal[]>(mockSavingsGoals);
-  const [isLoading, setIsLoading] = useState(Boolean(getAccessToken()));
+  const [budgets, setBudgets] = useState<Budget[]>([]);
+  const [goals, setGoals] = useState<SavingsGoal[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
   const loadData = useCallback(async () => {
-    const [nextBudgets, nextGoals] = await Promise.all([
-      budgetsApi.getBudgets('2026-09'),
+    const month = new Date().toISOString().slice(0, 7);
+    const [nextBudgets, nextGoals, nextCategories] = await Promise.all([
+      budgetsApi.getBudgets(month),
       budgetsApi.getGoals(),
+      transactionsApi.getCategories(),
     ]);
     setBudgets(nextBudgets);
     setGoals(nextGoals);
+    setCategories(nextCategories);
   }, []);
 
   useEffect(() => {
-    if (!getAccessToken()) {
-      setIsLoading(false);
-      return;
-    }
-
     let active = true;
     loadData()
       .catch((cause: unknown) => {
@@ -74,6 +66,8 @@ export const BudgetsGoalsPage: React.FC = () => {
   const [goalTargetAmount, setGoalTargetAmount] = useState('');
   const [goalCurrentAmount, setGoalCurrentAmount] = useState('');
   const [goalTargetDate, setGoalTargetDate] = useState('');
+  const [contributionGoal, setContributionGoal] = useState<SavingsGoal | null>(null);
+  const [contributionAmount, setContributionAmount] = useState('');
 
   const overallBudget = budgets.find((b) => b.categoryId === null) || budgets[0];
 
@@ -83,26 +77,16 @@ export const BudgetsGoalsPage: React.FC = () => {
     if (isNaN(amountNum) || amountNum <= 0) return;
 
     const catId = budgetCategory === 'overall' ? null : budgetCategory;
-    const cat = mockCategories.find((c) => c.id === catId);
+    const cat = categories.find((c) => c.id === catId);
 
     setIsSaving(true);
     try {
-      if (getAccessToken()) {
-        await budgetsApi.createOrUpdateBudget({ categoryId: catId, month: '2026-09', amount: amountNum });
-        await loadData();
-      } else {
-        const newBudget: Budget = {
-          id: `bud_${Date.now()}`,
-          userId: mockUser.id,
-          categoryId: catId,
-          category: cat,
-          month: '2026-09',
-          amount: amountNum,
-          spent: 0,
-          percentage: 0,
-        };
-        setBudgets((items) => [newBudget, ...items]);
-      }
+      await budgetsApi.createOrUpdateBudget({
+        categoryId: catId,
+        month: new Date().toISOString().slice(0, 7),
+        amount: amountNum,
+      });
+      await loadData();
       showToast(`Budget for ${cat?.name || 'Overall'} saved!`, 'success');
       setIsAddBudgetOpen(false);
       setBudgetAmount('');
@@ -121,27 +105,14 @@ export const BudgetsGoalsPage: React.FC = () => {
 
     setIsSaving(true);
     try {
-      if (getAccessToken()) {
-        const goal = await budgetsApi.createGoal({
-          name: goalName.trim(),
-          targetAmount: target,
-          savedAmount: saved,
-          targetDate: goalTargetDate,
-          color: '#9275F5',
-        });
-        setGoals((items) => [...items, goal]);
-      } else {
-        const newGoal: SavingsGoal = {
-          id: `goal_${Date.now()}`,
-          userId: mockUser.id,
-          name: goalName.trim(),
-          targetAmount: target,
-          savedAmount: saved,
-          targetDate: goalTargetDate,
-          color: '#9275F5',
-        };
-        setGoals((items) => [...items, newGoal]);
-      }
+      const goal = await budgetsApi.createGoal({
+        name: goalName.trim(),
+        targetAmount: target,
+        savedAmount: saved,
+        targetDate: goalTargetDate,
+        color: '#9275F5',
+      });
+      setGoals((items) => [goal, ...items]);
       showToast(`Savings goal "${goalName}" created!`, 'success');
       setIsAddGoalOpen(false);
       setGoalName('');
@@ -150,6 +121,39 @@ export const BudgetsGoalsPage: React.FC = () => {
       setGoalTargetDate('');
     } catch (cause) {
       showToast(cause instanceof Error ? cause.message : 'Could not create this goal.', 'error');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDeleteGoal = async (goal: SavingsGoal) => {
+    if (!window.confirm(`Delete the "${goal.name}" savings goal?`)) return;
+    try {
+      await budgetsApi.deleteGoal(goal.id);
+      setGoals((items) => items.filter((item) => item.id !== goal.id));
+      showToast('Savings goal deleted.', 'success');
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not delete this goal.', 'error');
+    }
+  };
+
+  const handleAddContribution = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!contributionGoal) return;
+    const amount = Number(contributionAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      showToast('Enter a contribution greater than zero.', 'error');
+      return;
+    }
+    setIsSaving(true);
+    try {
+      const updated = await budgetsApi.contributeToGoal(contributionGoal.id, { amount });
+      setGoals((items) => items.map((item) => item.id === updated.id ? updated : item));
+      setContributionGoal(null);
+      setContributionAmount('');
+      showToast('Savings contribution added.', 'success');
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not add the contribution.', 'error');
     } finally {
       setIsSaving(false);
     }
@@ -204,7 +208,7 @@ export const BudgetsGoalsPage: React.FC = () => {
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
             <div>
               <span className="text-xs font-bold text-navy/70 uppercase tracking-wider">
-                Monthly Overall Budget (September 2026)
+                Monthly Overall Budget ({new Date().toLocaleDateString(undefined, { month: 'long', year: 'numeric' })})
               </span>
               <h2 className="text-3xl sm:text-4xl font-extrabold text-navy mt-1">
                 ${overallBudget.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
@@ -281,6 +285,22 @@ export const BudgetsGoalsPage: React.FC = () => {
                     </div>
 
                     <BudgetProgress spent={spent} total={total} showLabels={false} />
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (!window.confirm('Delete this category budget?')) return;
+                        try {
+                          await budgetsApi.deleteBudget(b.id);
+                          setBudgets((items) => items.filter((item) => item.id !== b.id));
+                          showToast('Budget deleted.', 'success');
+                        } catch (cause) {
+                          showToast(cause instanceof Error ? cause.message : 'Could not delete this budget.', 'error');
+                        }
+                      }}
+                      className="self-end rounded-full px-3 py-1 text-[11px] font-bold text-rose-600 hover:bg-rose-50"
+                    >
+                      Delete
+                    </button>
                   </div>
                 );
               })}
@@ -322,11 +342,27 @@ export const BudgetsGoalsPage: React.FC = () => {
                   <div className="flex items-center justify-between text-[11px] text-navy-muted pt-1">
                     <span className="flex items-center gap-1">
                       <Calendar className="w-3 h-3" />
-                      Target: {new Date(goal.targetDate).toLocaleDateString()}
+                      Target: {goal.targetDate ? new Date(goal.targetDate).toLocaleDateString() : 'No date'}
                     </span>
                     <span className="font-semibold text-emerald-600">
                       ${Math.max(0, goal.targetAmount - goal.savedAmount).toLocaleString()} left
                     </span>
+                  </div>
+                  <div className="flex items-center justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setContributionGoal(goal)}
+                      className="rounded-full border border-purple-100 px-3 py-1.5 text-[11px] font-bold text-primary hover:bg-primary-light"
+                    >
+                      Add savings
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteGoal(goal)}
+                      className="rounded-full px-3 py-1.5 text-[11px] font-bold text-rose-600 hover:bg-rose-50"
+                    >
+                      Delete
+                    </button>
                   </div>
                 </div>
               );
@@ -351,7 +387,7 @@ export const BudgetsGoalsPage: React.FC = () => {
               className="w-full px-3 py-2.5 bg-[#F8F9FE] text-xs font-medium text-navy rounded-2xl border border-gray-200 focus:outline-none focus:border-primary"
             >
               <option value="overall">Monthly Overall Budget</option>
-              {mockCategories.map((c) => (
+              {categories.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
                 </option>
@@ -464,6 +500,36 @@ export const BudgetsGoalsPage: React.FC = () => {
               className="px-6 py-2.5 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isSaving ? 'Saving...' : 'Create Goal'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
+        isOpen={Boolean(contributionGoal)}
+        onClose={() => setContributionGoal(null)}
+        title="Add Savings"
+        subtitle={contributionGoal ? `Update progress for ${contributionGoal.name}` : 'Savings contribution'}
+      >
+        <form onSubmit={handleAddContribution} className="flex flex-col gap-4">
+          <div>
+            <label className="block text-xs font-bold text-navy mb-1">Contribution Amount ($)</label>
+            <input
+              type="number"
+              step="0.01"
+              min="0.01"
+              required
+              value={contributionAmount}
+              onChange={(event) => setContributionAmount(event.target.value)}
+              className="w-full px-4 py-2.5 bg-[#F8F9FE] text-xs font-medium text-navy rounded-2xl border border-gray-200"
+            />
+          </div>
+          <div className="flex justify-end gap-3">
+            <button type="button" onClick={() => setContributionGoal(null)} className="px-5 py-2.5 bg-gray-100 text-navy text-xs font-bold rounded-full">
+              Cancel
+            </button>
+            <button type="submit" disabled={isSaving} className="px-6 py-2.5 bg-primary text-white text-xs font-bold rounded-full disabled:opacity-60">
+              {isSaving ? 'Saving...' : 'Add Savings'}
             </button>
           </div>
         </form>

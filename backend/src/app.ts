@@ -8,6 +8,12 @@ import { errorHandler } from "./middleware/errorHandler";
 import categoryRoutes from './routes/category.routes';
 import incomeRoutes from './routes/income.routes';
 import expenseRoutes from './routes/expense.routes';
+import transactionRoutes from './routes/transaction.routes';
+import analyticsRoutes from './routes/analytics.routes';
+import planningRoutes from './routes/planning.routes';
+import notificationsRoutes from './routes/notifications.routes';
+import insightsRoutes from './routes/insights.routes';
+import receiptsRoutes from './routes/receipts.routes';
 
 const app = express();
 
@@ -29,6 +35,17 @@ app.use('/api/incomes', incomeRoutes);
 app.use('/api/v1/incomes', incomeRoutes);
 app.use('/api/expenses', expenseRoutes);
 app.use('/api/v1/expenses', expenseRoutes);
+app.use('/api/transactions', transactionRoutes);
+app.use('/api/v1/transactions', transactionRoutes);
+app.use('/api/analytics', analyticsRoutes);
+app.use('/api/v1/analytics', analyticsRoutes);
+app.use('/api/v1', planningRoutes);
+app.use('/api/v1/notifications', notificationsRoutes);
+app.use('/api/notifications', notificationsRoutes);
+app.use('/api/v1/insights', insightsRoutes);
+app.use('/api/insights', insightsRoutes);
+app.use('/api/v1/receipts', receiptsRoutes);
+app.use('/api/receipts', receiptsRoutes);
 
 app.get("/", (_req, res) => {
   res.json({

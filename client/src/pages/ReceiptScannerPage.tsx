@@ -180,16 +180,17 @@ export const ReceiptScannerPage: React.FC = () => {
 
     setIsSavingExpense(true);
     try {
-      await transactionsApi.createExpense({
+      const expense = await transactionsApi.createExpense({
         title: extractedVendor.trim(),
         amount,
         date: extractedDate,
         categoryId: extractedCategory,
         paymentMethod: 'OTHER',
         description: selectedFile ? `Receipt: ${selectedFile.name}` : undefined,
-        receiptId: receiptId || undefined,
-        recurring: 'NONE',
       });
+      if (receiptId) {
+        await receiptsApi.associateReceipt(receiptId, expense.id);
+      }
       showToast(`Expense for "${extractedVendor}" ($${amount.toFixed(2)}) saved!`, 'success');
       setIsReviewModalOpen(false);
       setSelectedFile(null);

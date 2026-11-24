@@ -11,6 +11,8 @@ import {
   resendVerification,
   updateProfile,
   verify,
+  changePassword,
+  deleteAccount,
 } from "../controllers/auth.controller";
 import { authenticate } from "../middleware/auth.middleware";
 import { validateBody } from "../middleware/validate.middleware";
@@ -21,6 +23,8 @@ import {
   resetPasswordSchema,
   updateProfileSchema,
   verifyEmailSchema,
+  changePasswordSchema,
+  deleteAccountSchema,
 } from "../validators/auth.validator";
 import rateLimit from "express-rate-limit";
 import { env } from "../config/env";
@@ -46,5 +50,7 @@ router.post("/forgot-password", authLimiter, validateBody(emailOnlySchema), forg
 router.post("/reset-password", authLimiter, validateBody(resetPasswordSchema), completePasswordReset);
 router.get("/me", authenticate, me);
 router.put("/profile", authenticate, validateBody(updateProfileSchema), updateProfile);
+router.put("/password", authenticate, validateBody(changePasswordSchema), changePassword);
+router.delete("/account", authenticate, validateBody(deleteAccountSchema), deleteAccount);
 
 export default router;

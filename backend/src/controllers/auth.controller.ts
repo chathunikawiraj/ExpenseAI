@@ -10,6 +10,8 @@ import {
   revokeRefreshToken,
   updateUserProfile,
   verifyEmail,
+  changeAuthenticatedPassword,
+  deleteAuthenticatedAccount,
 } from '../services/auth.service';
 import { AuthError } from '../services/auth.service';
 import { env } from '../config/env';
@@ -106,4 +108,17 @@ export const updateProfile: RequestHandler = async (req, res) => {
       : 'Profile updated. Check your new email address to verify it before signing in again.',
     user,
   });
+};
+
+export const changePassword: RequestHandler = async (req, res) => {
+  if (!req.authUser) throw new AuthError('Authentication is required.', 401, 'UNAUTHENTICATED');
+  await changeAuthenticatedPassword(req.authUser.userId, req.body);
+  res.status(200).json({ message: 'Password changed successfully. Sign in again.' });
+};
+
+export const deleteAccount: RequestHandler = async (req, res) => {
+  if (!req.authUser) throw new AuthError('Authentication is required.', 401, 'UNAUTHENTICATED');
+  await deleteAuthenticatedAccount(req.authUser.userId);
+  clearRefreshCookie(res);
+  res.status(200).json({ message: 'Account deleted successfully.' });
 };
