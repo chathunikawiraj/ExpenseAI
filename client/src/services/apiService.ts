@@ -1,5 +1,5 @@
 import { apiRequest, setAccessToken } from './api';
-import { User, Expense, Income, Category, Budget, SavingsGoal, InsightItem, NotificationItem, UnifiedTransaction, DashboardSummary, CategoryBreakdown, AnalyticsTrends } from '../types';
+import { User, Expense, Income, Category, Budget, SavingsGoal, SavingsContributionHistory, InsightItem, NotificationItem, UnifiedTransaction, DashboardSummary, CategoryBreakdown, AnalyticsTrends, Receipt } from '../types';
 
 interface PageMeta {
   total: number;
@@ -11,6 +11,21 @@ interface PageMeta {
 interface ListResponse<T> {
   data: T[];
   meta: PageMeta;
+}
+
+interface ReceiptScanResult {
+  receiptId: string;
+  fileUrl: string;
+  ocrStatus: Receipt['ocrStatus'];
+  confidence: number | null;
+  manualEntryRequired: boolean;
+  extracted: {
+    vendor: string | null;
+    date: string | null;
+    amount: number | null;
+    suggestedCategoryId: string | null;
+  };
+  receipt: Receipt;
 }
 
 interface TransactionQuery {
@@ -221,6 +236,20 @@ export const budgetsApi = {
     });
   },
 
+  async getBudget(id: string): Promise<Budget> {
+    return apiRequest(`/budgets/${id}`);
+  },
+
+  async updateBudget(
+    id: string,
+    data: { categoryId?: string | null; month?: string; amount?: number },
+  ): Promise<Budget> {
+    return apiRequest(`/budgets/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
   async deleteBudget(id: string) {
     return apiRequest(`/budgets/${id}`, { method: 'DELETE' });
   },
@@ -229,14 +258,24 @@ export const budgetsApi = {
     return apiRequest('/goals');
   },
 
-  async createGoal(data: Partial<SavingsGoal>): Promise<SavingsGoal> {
+  async createGoal(
+    data: Pick<SavingsGoal, 'name' | 'targetAmount'> &
+      Partial<Pick<SavingsGoal, 'savedAmount'>> & { targetDate?: string },
+  ): Promise<SavingsGoal> {
     return apiRequest('/goals', {
       method: 'POST',
       body: JSON.stringify(data),
     });
   },
 
-  async updateGoal(id: string, data: Partial<SavingsGoal>): Promise<SavingsGoal> {
+  async getGoal(id: string): Promise<SavingsGoal> {
+    return apiRequest(`/goals/${id}`);
+  },
+
+  async updateGoal(
+    id: string,
+    data: { name?: string; targetAmount?: number; targetDate?: string | null },
+  ): Promise<SavingsGoal> {
     return apiRequest(`/goals/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -263,7 +302,17 @@ export const budgetsApi = {
     return apiRequest(`/notifications/${id}`, { method: 'DELETE' });
   },
 
-  async contributeToGoal(id: string, data: { amount: number; date?: string; note?: string }): Promise<SavingsGoal> {
+  async getGoalContributions(
+    id: string,
+    params: { page?: number; limit?: number } = {},
+  ): Promise<SavingsContributionHistory> {
+    return apiRequest(`/goals/${id}/contributions${queryString(params)}`);
+  },
+
+  async contributeToGoal(
+    id: string,
+    data: { amount: number; date?: string; note?: string },
+  ): Promise<SavingsGoal> {
     return apiRequest(`/goals/${id}/contributions`, {
       method: 'POST',
       body: JSON.stringify(data),
@@ -272,21 +321,45 @@ export const budgetsApi = {
 };
 
 export const receiptsApi = {
-  async uploadAndOcr(file: File) {
+  async uploadAndOcr(file: File): Promise<ReceiptScanResult> {
     const formData = new FormData();
     formData.append('receipt', file);
-    return apiRequest<{
-      receiptId: string;
-      fileUrl: string;
-      extracted: {
-        vendor: string | null;
-        date: string | null;
-        amount: number | null;
-        suggestedCategoryId: string;
-        success: boolean;
-      };
-    }>('/receipts', {
+    return apiRequest('/receipts/scan', {
       method: 'POST',
+      body: formData,
+    });
+  },
+
+  async confirmExpense(
+    receiptId: string,
+    expense: {
+      title: string;
+      amount: number;
+      date: string;
+      categoryId: string;
+      paymentMethod: Expense['paymentMethod'];
+      description?: string;
+    },
+  ): Promise<{ expense: Expense; receipt: Receipt }> {
+    return apiRequest('/receipts/confirm', {
+      method: 'POST',
+      body: JSON.stringify({ receiptId, ...expense }),
+    });
+  },
+
+  async getReceipt(id: string): Promise<Receipt> {
+    return apiRequest<Receipt>(`/receipts/${id}`);
+  },
+
+  async getReceiptImage(id: string): Promise<Blob> {
+    return apiRequest<Blob>(`/receipts/${id}/file`);
+  },
+
+  async replaceReceiptImage(id: string, file: File): Promise<ReceiptScanResult> {
+    const formData = new FormData();
+    formData.append('receipt', file);
+    return apiRequest<ReceiptScanResult>(`/receipts/${id}`, {
+      method: 'PUT',
       body: formData,
     });
   },

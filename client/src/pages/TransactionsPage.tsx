@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { useQueryClient } from '@tanstack/react-query';
 import { AppShell } from '../components/layout/AppShell';
 import { Modal } from '../components/common/Modal';
 import { CategoryBadge } from '../components/common/CategoryBadge';
@@ -19,6 +20,9 @@ import {
 import { Expense, Income, PaymentMethod } from '../types';
 import { transactionsApi } from '../services/apiService';
 import { ResourceStatus } from '../components/common/ResourceStatus';
+import { useNotifications } from '../context/NotificationContext';
+import { useAuth } from '../context/AuthContext';
+import { dashboardQueryKeys } from '../services/dashboardQueryKeys';
 
 interface TransactionRow {
   id: string;
@@ -36,6 +40,9 @@ interface TransactionRow {
 
 export const TransactionsPage: React.FC = () => {
   const { showToast } = useToast();
+  const { reload: reloadNotifications } = useNotifications();
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
   const reduceMotion = useReducedMotion();
   const [activeTab, setActiveTab] = useState<'all' | 'expenses' | 'incomes'>('all');
   const [searchTerm, setSearchTerm] = useState('');
@@ -316,9 +323,15 @@ export const TransactionsPage: React.FC = () => {
         }
       }
 
+      if (user?.id) {
+        void queryClient.invalidateQueries({
+          queryKey: dashboardQueryKeys.financial(user.id),
+        });
+      }
       setIsAddModalOpen(false);
       setCurrentPage(1);
       setRefreshCount((count) => count + 1);
+      if (formType === 'expense') reloadNotifications();
       showToast(`${editTarget ? 'Transaction updated' : 'Transaction added'} successfully.`, 'success');
       if (!editTarget) {
         setActiveTab('all');
@@ -417,6 +430,12 @@ export const TransactionsPage: React.FC = () => {
     try {
       if (deleteTarget.type === 'expense') await transactionsApi.deleteExpense(deleteTarget.id);
       else await transactionsApi.deleteIncome(deleteTarget.id);
+      if (user?.id) {
+        void queryClient.invalidateQueries({
+          queryKey: dashboardQueryKeys.financial(user.id),
+        });
+      }
+      if (deleteTarget.type === 'expense') reloadNotifications();
       setIsDeleteModalOpen(false);
       setDeleteTarget(null);
       setRefreshCount((count) => count + 1);

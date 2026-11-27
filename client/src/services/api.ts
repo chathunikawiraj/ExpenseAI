@@ -136,7 +136,10 @@ export async function apiRequest<T = any>(
 
   // Handle blob responses (e.g. CSV export)
   if (response.headers.get('content-type')?.includes('text/csv')) {
-    return response.blob() as any;
+    return response.blob() as T;
+  }
+  if (response.headers.get('content-type')?.startsWith('image/')) {
+    return response.blob() as T;
   }
 
   return response.json();

@@ -2,9 +2,12 @@ import 'dotenv/config';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Server } from 'node:http';
+import { assertSafeTestDatabase } from '../test-utils/testDatabaseGuard.js';
 import app from '../app.js';
 import prisma from '../config/database.js';
 import { signAccessToken } from '../utils/jwt.js';
+
+assertSafeTestDatabase();
 
 test('income CRUD is authenticated and scoped to the owning user', async () => {
   await prisma.$connect();

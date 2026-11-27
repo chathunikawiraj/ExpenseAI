@@ -1,43 +1,28 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import prisma from '../config/database';
 import { AuthError } from './auth.service';
-import type { UpsertBudgetInput } from '../validators/budget.validator';
+import {
+  getBudgetSnapshot,
+  recalculateBudgetById,
+  runBudgetMonitoringTransaction,
+  runSerializableTransaction,
+} from './budget-monitoring.service';
+import type { UpdateBudgetInput, UpsertBudgetInput } from '../validators/budget.validator';
+import type { ContributionQuery } from '../validators/goal.validator';
 
-const monthRange = (month: string) => {
-  const [year, monthNumber] = month.split('-').map(Number);
-  return {
-    start: new Date(Date.UTC(year, monthNumber - 1, 1)),
-    end: new Date(Date.UTC(year, monthNumber, 1)),
-  };
-};
-
-const calculateBudget = async (
+const validateBudgetCategory = async (
   userId: string,
-  budget: Prisma.BudgetGetPayload<{ include: { category: true } }>
+  categoryId: string | null | undefined,
+  client: Prisma.TransactionClient | typeof prisma = prisma
 ) => {
-  const [year, monthNumber] = budget.month.toISOString().slice(0, 7).split('-').map(Number);
-  const range = monthRange(`${year}-${String(monthNumber).padStart(2, '0')}`);
-  const spentAggregate = await prisma.expense.aggregate({
+  if (!categoryId) return;
+  const category = await client.category.findFirst({
     where: {
-      userId,
-      date: { gte: range.start, lt: range.end },
-      ...(budget.categoryId ? { categoryId: budget.categoryId } : {}),
+      id: categoryId,
+      OR: [{ userId: null, isDefault: true }, { userId }],
     },
-    _sum: { amount: true },
   });
-  const spent = Number(spentAggregate._sum.amount ?? 0);
-  const amount = Number(budget.amount);
-  return {
-    id: budget.id,
-    userId: budget.userId,
-    categoryId: budget.categoryId,
-    category: budget.category,
-    month: budget.month.toISOString().slice(0, 7),
-    amount,
-    spent,
-    remaining: Math.max(0, amount - spent),
-    percentage: amount > 0 ? (spent / amount) * 100 : 0,
-  };
+  if (!category) throw new AuthError('Selected category is unavailable.', 400, 'INVALID_CATEGORY');
 };
 
 export const listBudgets = async (userId: string, month?: string) => {
@@ -49,58 +34,108 @@ export const listBudgets = async (userId: string, month?: string) => {
     include: { category: true },
     orderBy: [{ month: 'desc' }, { createdAt: 'asc' }],
   });
-  return Promise.all(budgets.map((budget) => calculateBudget(userId, budget)));
+  return Promise.all(budgets.map((budget) => getBudgetSnapshot(userId, budget)));
 };
 
 export const upsertBudget = async (userId: string, input: UpsertBudgetInput) => {
   const month = new Date(`${input.month}-01T00:00:00.000Z`);
-  if (input.categoryId) {
-    const category = await prisma.category.findFirst({
-      where: {
-        id: input.categoryId,
-        OR: [{ userId: null, isDefault: true }, { userId, isDefault: false }],
-      },
-    });
-    if (!category) throw new AuthError('Selected category is unavailable.', 400, 'INVALID_CATEGORY');
-  }
 
-  const existing = await prisma.budget.findFirst({
-    where: { userId, month, categoryId: input.categoryId ?? null },
+  try {
+    return await runBudgetMonitoringTransaction(async (transaction) => {
+      await validateBudgetCategory(userId, input.categoryId, transaction);
+      const existing = await transaction.budget.findFirst({
+        where: { userId, month, categoryId: input.categoryId ?? null },
+        select: { id: true },
+      });
+      const budget = existing
+        ? await transaction.budget.update({
+            where: { id: existing.id },
+            data: { amount: input.amount },
+            include: { category: true },
+          })
+        : await transaction.budget.create({
+            data: { userId, month, categoryId: input.categoryId ?? null, amount: input.amount },
+            include: { category: true },
+          });
+      const result = await recalculateBudgetById(transaction, userId, budget.id);
+      if (!result) throw new AuthError('Budget was not found.', 404, 'BUDGET_NOT_FOUND');
+      return result;
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      throw new AuthError(
+        'A budget already exists for this month and category.',
+        409,
+        'BUDGET_ALREADY_EXISTS'
+      );
+    }
+    throw error;
+  }
+};
+
+export const getBudget = async (userId: string, budgetId: string) => {
+  const budget = await prisma.budget.findFirst({
+    where: { id: budgetId, userId },
+    include: { category: true },
   });
-  const budget = existing
-    ? await prisma.budget.update({
-        where: { id: existing.id },
-        data: { amount: input.amount },
-        include: { category: true },
-      })
-    : await prisma.budget.create({
-        data: { userId, month, categoryId: input.categoryId ?? null, amount: input.amount },
+  if (!budget) throw new AuthError('Budget was not found.', 404, 'BUDGET_NOT_FOUND');
+  return getBudgetSnapshot(userId, budget);
+};
+
+export const updateBudget = async (
+  userId: string,
+  budgetId: string,
+  input: UpdateBudgetInput
+) => {
+  const existing = await prisma.budget.findFirst({
+    where: { id: budgetId, userId },
+  });
+  if (!existing) throw new AuthError('Budget was not found.', 404, 'BUDGET_NOT_FOUND');
+
+  try {
+    return await runBudgetMonitoringTransaction(async (transaction) => {
+      const current = await transaction.budget.findFirst({
+        where: { id: budgetId, userId },
+      });
+      if (!current) throw new AuthError('Budget was not found.', 404, 'BUDGET_NOT_FOUND');
+
+      const categoryId = input.categoryId === undefined ? current.categoryId : input.categoryId;
+      const month = input.month
+        ? new Date(`${input.month}-01T00:00:00.000Z`)
+        : current.month;
+      await validateBudgetCategory(userId, categoryId, transaction);
+      const scopeChanged =
+        current.categoryId !== categoryId ||
+        current.month.getTime() !== month.getTime();
+      const budget = await transaction.budget.update({
+        where: { id: current.id },
+        data: {
+          categoryId,
+          month,
+          amount: input.amount ?? current.amount,
+        },
         include: { category: true },
       });
+      if (scopeChanged) {
+        await transaction.budgetThresholdEvent.deleteMany({
+          where: { budgetId: budget.id },
+        });
+      }
 
-  const result = await calculateBudget(userId, budget);
-  for (const threshold of [50, 80, 100]) {
-    if (result.percentage < threshold) continue;
-    const thresholdEvent = await prisma.budgetThresholdEvent.findUnique({
-      where: { budgetId_threshold: { budgetId: budget.id, threshold } },
+      const result = await recalculateBudgetById(transaction, userId, budget.id);
+      if (!result) throw new AuthError('Budget was not found.', 404, 'BUDGET_NOT_FOUND');
+      return result;
     });
-    await prisma.budgetThresholdEvent.upsert({
-      where: { budgetId_threshold: { budgetId: budget.id, threshold } },
-      update: {},
-      create: { budgetId: budget.id, threshold },
-    });
-    if (thresholdEvent) continue;
-    await prisma.notification.create({
-      data: {
-        userId,
-        type: 'BUDGET_ALERT',
-        message: threshold === 100
-          ? `Budget utilization reached ${Math.round(result.percentage)}% for ${result.category?.name ?? 'your overall budget'}`
-          : `Budget utilization reached ${threshold}% for ${result.category?.name ?? 'your overall budget'}`,
-      },
-    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      throw new AuthError(
+        'A budget already exists for this month and category.',
+        409,
+        'BUDGET_ALREADY_EXISTS'
+      );
+    }
+    throw error;
   }
-  return result;
 };
 
 export const deleteBudget = async (userId: string, budgetId: string) => {
@@ -108,29 +143,51 @@ export const deleteBudget = async (userId: string, budgetId: string) => {
   if (result.count === 0) throw new AuthError('Budget was not found.', 404, 'BUDGET_NOT_FOUND');
 };
 
-const goalResponse = async (goal: {
-  id: string;
-  userId: string;
-  name: string;
-  targetAmount: Prisma.Decimal;
-  targetDate: Date | null;
-  createdAt: Date;
-  updatedAt: Date;
-}) => {
-  const aggregate = await prisma.savingsContribution.aggregate({
+type SavingsDatabaseClient = Prisma.TransactionClient | typeof prisma;
+
+export const calculateSavingsGoalProgress = (
+  targetAmount: Prisma.Decimal,
+  savedAmount: Prisma.Decimal
+) => {
+  const nonNegativeSavedAmount = savedAmount.gt(0) ? savedAmount : new Prisma.Decimal(0);
+  const remainingAmount = targetAmount.minus(nonNegativeSavedAmount);
+  const rawPercentage = targetAmount.gt(0)
+    ? nonNegativeSavedAmount.div(targetAmount).mul(100)
+    : new Prisma.Decimal(0);
+  return {
+    savedAmount: nonNegativeSavedAmount,
+    remainingAmount: remainingAmount.gt(0) ? remainingAmount : new Prisma.Decimal(0),
+    percentage: rawPercentage.gt(100) ? new Prisma.Decimal(100) : rawPercentage,
+    isCompleted: targetAmount.gt(0) && nonNegativeSavedAmount.gte(targetAmount),
+  };
+};
+
+export const shouldNotifyGoalCompletion = (
+  wasCompleted: boolean,
+  isCompleted: boolean
+) => !wasCompleted && isCompleted;
+
+const goalResponse = async (
+  goal: Prisma.SavingsGoalGetPayload<{}>,
+  client: SavingsDatabaseClient = prisma
+) => {
+  const aggregate = await client.savingsContribution.aggregate({
     where: { goalId: goal.id },
     _sum: { amount: true },
   });
-  const savedAmount = Number(aggregate._sum.amount ?? 0);
-  const targetAmount = Number(goal.targetAmount);
+  const progress = calculateSavingsGoalProgress(
+    goal.targetAmount,
+    aggregate._sum.amount ?? new Prisma.Decimal(0)
+  );
   return {
     id: goal.id,
     userId: goal.userId,
     name: goal.name,
-    targetAmount,
-    savedAmount,
-    remainingAmount: Math.max(0, targetAmount - savedAmount),
-    percentage: targetAmount > 0 ? (savedAmount / targetAmount) * 100 : 0,
+    targetAmount: goal.targetAmount.toNumber(),
+    savedAmount: progress.savedAmount.toNumber(),
+    remainingAmount: progress.remainingAmount.toNumber(),
+    percentage: progress.percentage.toNumber(),
+    isCompleted: progress.isCompleted,
     targetDate: goal.targetDate?.toISOString().slice(0, 10) ?? null,
     createdAt: goal.createdAt,
     updatedAt: goal.updatedAt,
@@ -142,58 +199,110 @@ export const listGoals = async (userId: string) => {
     where: { userId },
     orderBy: { createdAt: 'desc' },
   });
-  return Promise.all(goals.map(goalResponse));
+  return Promise.all(goals.map((goal) => goalResponse(goal)));
+};
+
+export const getGoal = async (userId: string, goalId: string) => {
+  const goal = await prisma.savingsGoal.findFirst({
+    where: { id: goalId, userId },
+  });
+  if (!goal) throw new AuthError('Savings goal was not found.', 404, 'GOAL_NOT_FOUND');
+  return goalResponse(goal);
+};
+
+const notifyContribution = async (
+  transaction: Prisma.TransactionClient,
+  userId: string,
+  goal: Prisma.SavingsGoalGetPayload<{}>,
+  amount: Prisma.Decimal
+) => {
+  await transaction.notification.create({
+    data: {
+      userId,
+      type: 'SAVINGS_UPDATE',
+      message: `A contribution of $${amount.toFixed(2)} was added to "${goal.name}".`,
+    },
+  });
+};
+
+const notifyGoalCompleted = async (
+  transaction: Prisma.TransactionClient,
+  userId: string,
+  goal: Prisma.SavingsGoalGetPayload<{}>
+) => {
+  await transaction.notification.create({
+    data: {
+      userId,
+      type: 'GOAL_COMPLETED',
+      message: `Congratulations! You completed the "${goal.name}" savings goal.`,
+    },
+  });
 };
 
 export const createGoal = async (
   userId: string,
   input: {
     name: string;
-    targetAmount: number;
-    savedAmount?: number;
+    targetAmount: Prisma.Decimal;
+    savedAmount?: Prisma.Decimal;
     targetDate?: Date;
   }
 ) => {
-  const goal = await prisma.savingsGoal.create({
-    data: {
-      userId,
-      name: input.name,
-      targetAmount: input.targetAmount,
-      targetDate: input.targetDate,
-      ...(input.savedAmount && input.savedAmount > 0
-        ? {
-            contributions: {
-              create: {
-                amount: input.savedAmount,
-                date: new Date(),
-                note: 'Initial savings',
-              },
-            },
-          }
-        : {}),
-    },
+  return runSerializableTransaction(async (transaction) => {
+    const goal = await transaction.savingsGoal.create({
+      data: {
+        userId,
+        name: input.name,
+        targetAmount: input.targetAmount,
+        targetDate: input.targetDate,
+      },
+    });
+    const initialSavedAmount = input.savedAmount ?? new Prisma.Decimal(0);
+    if (initialSavedAmount.gt(0)) {
+      await transaction.savingsContribution.create({
+        data: {
+          goalId: goal.id,
+          amount: initialSavedAmount,
+          date: new Date(),
+          note: 'Initial savings',
+        },
+      });
+      await notifyContribution(transaction, userId, goal, initialSavedAmount);
+    }
+
+    const response = await goalResponse(goal, transaction);
+    if (shouldNotifyGoalCompletion(false, response.isCompleted)) {
+      await notifyGoalCompleted(transaction, userId, goal);
+    }
+    return response;
   });
-  return goalResponse(goal);
 };
 
 export const updateGoal = async (
   userId: string,
   goalId: string,
-  input: { name?: string; targetAmount?: number; targetDate?: Date | null }
+  input: { name?: string; targetAmount?: Prisma.Decimal; targetDate?: Date | null }
 ) => {
-  const existing = await prisma.savingsGoal.findFirst({
-    where: { id: goalId, userId },
+  return runSerializableTransaction(async (transaction) => {
+    const existing = await transaction.savingsGoal.findFirst({
+      where: { id: goalId, userId },
+    });
+    if (!existing) throw new AuthError('Savings goal was not found.', 404, 'GOAL_NOT_FOUND');
+    const previous = await goalResponse(existing, transaction);
+    const goal = await transaction.savingsGoal.update({
+      where: { id: goalId },
+      data: {
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.targetAmount !== undefined ? { targetAmount: input.targetAmount } : {}),
+        ...(input.targetDate !== undefined ? { targetDate: input.targetDate } : {}),
+      },
+    });
+    const response = await goalResponse(goal, transaction);
+    if (shouldNotifyGoalCompletion(previous.isCompleted, response.isCompleted)) {
+      await notifyGoalCompleted(transaction, userId, goal);
+    }
+    return response;
   });
-  if (!existing) throw new AuthError('Savings goal was not found.', 404, 'GOAL_NOT_FOUND');
-  const goal = await prisma.savingsGoal.update({
-    where: { id: goalId },
-    data: {
-      ...(input.name !== undefined ? { name: input.name } : {}),
-      ...(input.targetAmount !== undefined ? { targetAmount: input.targetAmount } : {}),
-      ...(input.targetDate !== undefined ? { targetDate: input.targetDate } : {}),
-    },
-  });
-  return goalResponse(goal);
 };
 
 export const deleteGoal = async (userId: string, goalId: string) => {
@@ -204,17 +313,65 @@ export const deleteGoal = async (userId: string, goalId: string) => {
 export const contributeToGoal = async (
   userId: string,
   goalId: string,
-  input: { amount: number; date?: Date; note?: string }
+  input: { amount: Prisma.Decimal; date?: Date; note?: string }
 ) => {
-  const goal = await prisma.savingsGoal.findFirst({ where: { id: goalId, userId } });
-  if (!goal) throw new AuthError('Savings goal was not found.', 404, 'GOAL_NOT_FOUND');
-  await prisma.savingsContribution.create({
-    data: {
-      goalId,
-      amount: input.amount,
-      date: input.date ?? new Date(),
-      note: input.note,
-    },
+  return runSerializableTransaction(async (transaction) => {
+    const goal = await transaction.savingsGoal.findFirst({ where: { id: goalId, userId } });
+    if (!goal) throw new AuthError('Savings goal was not found.', 404, 'GOAL_NOT_FOUND');
+    const previous = await goalResponse(goal, transaction);
+
+    await transaction.savingsContribution.create({
+      data: {
+        goalId,
+        amount: input.amount,
+        date: input.date ?? new Date(),
+        note: input.note,
+      },
+    });
+    await notifyContribution(transaction, userId, goal, input.amount);
+    const response = await goalResponse(goal, transaction);
+    if (shouldNotifyGoalCompletion(previous.isCompleted, response.isCompleted)) {
+      await notifyGoalCompleted(transaction, userId, goal);
+    }
+    return response;
   });
-  return goalResponse(goal);
+};
+
+export const listGoalContributions = async (
+  userId: string,
+  goalId: string,
+  query: ContributionQuery
+) => {
+  const goal = await prisma.savingsGoal.findFirst({
+    where: { id: goalId, userId },
+    select: { id: true },
+  });
+  if (!goal) throw new AuthError('Savings goal was not found.', 404, 'GOAL_NOT_FOUND');
+
+  const skip = (query.page - 1) * query.limit;
+  const [contributions, total] = await Promise.all([
+    prisma.savingsContribution.findMany({
+      where: { goalId: goal.id },
+      orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+      skip,
+      take: query.limit,
+    }),
+    prisma.savingsContribution.count({ where: { goalId: goal.id } }),
+  ]);
+  return {
+    data: contributions.map((contribution) => ({
+      id: contribution.id,
+      goalId: contribution.goalId,
+      amount: contribution.amount.toNumber(),
+      date: contribution.date.toISOString().slice(0, 10),
+      note: contribution.note,
+      createdAt: contribution.createdAt,
+    })),
+    meta: {
+      total,
+      page: query.page,
+      limit: query.limit,
+      totalPages: Math.ceil(total / query.limit),
+    },
+  };
 };

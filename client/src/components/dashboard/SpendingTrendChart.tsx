@@ -10,18 +10,20 @@ import { ChevronDown, ArrowDownLeft, ArrowUpRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { CardActionMenu } from '../common/CardActionMenu';
 import { AnalyticsTrends, Expense, Income } from '../../types';
+import { formatCurrency } from '../../utils/formatCurrency';
 
 type Period = 'This week' | 'This month' | 'This year';
 
 interface TrendPoint {
   label: string;
-  income: number;
+  income: number | null;
   expense: number;
 }
 
 interface SpendingTrendChartProps {
   incomes: Income[];
   expenses: Expense[];
+  currency: string;
   analyticsTrends?: AnalyticsTrends | null;
 }
 
@@ -103,6 +105,7 @@ const buildTrend = (period: Period, incomes: Income[], expenses: Expense[]) => {
 export const SpendingTrendChart: React.FC<SpendingTrendChartProps> = ({
   incomes,
   expenses,
+  currency,
   analyticsTrends,
 }) => {
   const navigate = useNavigate();
@@ -111,7 +114,10 @@ export const SpendingTrendChart: React.FC<SpendingTrendChartProps> = ({
   const periodData = useMemo(() => {
     if (!analyticsTrends) return buildTrend(period, incomes, expenses);
     if (period === 'This year') {
-      const trend = analyticsTrends.monthly.map((item) => {
+      const currentYear = String(new Date().getFullYear());
+      const trend = analyticsTrends.monthly
+        .filter((item) => item.month.slice(0, 4) === currentYear)
+        .map((item) => {
         const monthNumber = Number(item.month.slice(5, 7));
         const label = new Date(Date.UTC(2000, monthNumber - 1, 1))
           .toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' });
@@ -140,12 +146,12 @@ export const SpendingTrendChart: React.FC<SpendingTrendChartProps> = ({
             weekday: 'short',
             timeZone: 'UTC',
           }),
-      income: 0,
+      income: null,
       expense: item.expense,
     }));
     return {
       trend,
-      incomeTotal: 0,
+      incomeTotal: null,
       expenseTotal: trend.reduce((total, item) => total + item.expense, 0),
       activePeriods: trend.filter((item) => item.expense > 0).length,
     };
@@ -168,7 +174,7 @@ export const SpendingTrendChart: React.FC<SpendingTrendChartProps> = ({
             />
           </div>
           <p className="text-xs text-primary font-semibold mt-0.5">
-            Expenses by {period === 'This year' ? 'month' : 'day'}
+            {period === 'This year' ? 'Income & expenses by month' : 'Expenses by day'}
             <span className="text-navy-muted font-normal"> · {period}</span>
           </p>
         </div>
@@ -216,6 +222,10 @@ export const SpendingTrendChart: React.FC<SpendingTrendChartProps> = ({
                 <stop offset="5%" stopColor="#9275F5" stopOpacity={0.25} />
                 <stop offset="95%" stopColor="#9275F5" stopOpacity={0.0} />
               </linearGradient>
+              <linearGradient id="greenGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#4BC9A2" stopOpacity={0.2} />
+                <stop offset="95%" stopColor="#4BC9A2" stopOpacity={0.0} />
+              </linearGradient>
             </defs>
             <XAxis
               dataKey="label"
@@ -231,13 +241,26 @@ export const SpendingTrendChart: React.FC<SpendingTrendChartProps> = ({
                   return (
                     <div className="bg-navy text-white text-xs px-3 py-2 rounded-xl shadow-lg">
                       <p className="font-bold">{label}</p>
-                      <p>Income: ${Number(payload[0].payload.income).toFixed(2)}</p>
-                      <p>Expenses: ${Number(payload[0].payload.expense).toFixed(2)}</p>
+                      <p>
+                        Income: {payload[0].payload.income === null
+                          ? 'Not available for daily reporting'
+                          : formatCurrency(Number(payload[0].payload.income), currency)}
+                      </p>
+                      <p>Expenses: {formatCurrency(Number(payload[0].payload.expense), currency)}</p>
                     </div>
                   );
                 }
                 return null;
               }}
+            />
+            <Area
+              type="monotone"
+              dataKey="income"
+              stroke="#4BC9A2"
+              strokeWidth={2}
+              fillOpacity={1}
+              fill="url(#greenGradient)"
+              activeDot={{ r: 5, fill: '#4BC9A2', stroke: '#FFFFFF', strokeWidth: 3 }}
             />
             <Area
               type="monotone"
@@ -261,8 +284,12 @@ export const SpendingTrendChart: React.FC<SpendingTrendChartProps> = ({
           <div>
             <h4 className="text-sm font-bold text-navy">Income</h4>
             <p className="text-xs text-navy-muted">
-              ${periodData.incomeTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              <span className="text-[11px]">({periodData.activePeriods} active {periodUnit})</span>
+              {periodData.incomeTotal === null
+                ? 'Not available for daily reporting'
+                : formatCurrency(periodData.incomeTotal, currency)}
+              {periodData.incomeTotal !== null && (
+                <span className="text-[11px]">({periodData.activePeriods} active {periodUnit})</span>
+              )}
             </p>
           </div>
         </div>
@@ -274,7 +301,7 @@ export const SpendingTrendChart: React.FC<SpendingTrendChartProps> = ({
           <div>
             <h4 className="text-sm font-bold text-navy">Expenses</h4>
             <p className="text-xs text-navy-muted">
-              ${periodData.expenseTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {formatCurrency(periodData.expenseTotal, currency)}
               <span className="text-[11px]">({periodData.activePeriods} active {periodUnit})</span>
             </p>
           </div>

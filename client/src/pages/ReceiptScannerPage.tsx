@@ -1,4 +1,6 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { AppShell } from '../components/layout/AppShell';
 import { Modal } from '../components/common/Modal';
 import { useToast } from '../components/common/Toast';
@@ -10,34 +12,50 @@ import {
   Sparkles,
   Camera,
   Trash2,
-  Edit3,
   Calendar,
   DollarSign,
   Store,
-  RefreshCw
+  RefreshCw,
 } from 'lucide-react';
-import { mockCategories } from '../data/mockData';
 import { receiptsApi, transactionsApi } from '../services/apiService';
 import { getAccessToken } from '../services/api';
+import { useNotifications } from '../context/NotificationContext';
+import { useAuth } from '../context/AuthContext';
+import { dashboardQueryKeys } from '../services/dashboardQueryKeys';
+import type { PaymentMethod } from '../types';
 
 export const ReceiptScannerPage: React.FC = () => {
   const { showToast } = useToast();
+  const { reload: reloadNotifications } = useNotifications();
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const categoriesQuery = useQuery({
+    queryKey: dashboardQueryKeys.categories(user?.id ?? ''),
+    queryFn: () => transactionsApi.getCategories(),
+    enabled: Boolean(user?.id),
+  });
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState(false);
-  const [scanProgress, setScanProgress] = useState(0);
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
 
   // Extracted OCR fields
   const [extractedVendor, setExtractedVendor] = useState('');
   const [extractedAmount, setExtractedAmount] = useState('');
   const [extractedDate, setExtractedDate] = useState('');
-  const [extractedCategory, setExtractedCategory] = useState(mockCategories[6].id); // Shopping & Tech default
-  const [ocrSuccess, setOcrSuccess] = useState(true);
+  const [extractedCategory, setExtractedCategory] = useState('');
+  const [description, setDescription] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('OTHER');
+  const [ocrSuccess, setOcrSuccess] = useState(false);
   const [receiptId, setReceiptId] = useState<string | null>(null);
+  const [receiptConfirmed, setReceiptConfirmed] = useState(false);
   const [isSavingExpense, setIsSavingExpense] = useState(false);
+
+  useEffect(() => () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+  }, [previewUrl]);
 
   // Magic byte validation helper
   const validateMagicBytes = async (file: File): Promise<boolean> => {
@@ -51,7 +69,7 @@ export const ReceiptScannerPage: React.FC = () => {
         const arr = new Uint8Array(reader.result as ArrayBuffer).subarray(0, 4);
         let header = '';
         for (let i = 0; i < arr.length; i++) {
-          header += arr[i].toString(16);
+          header += arr[i].toString(16).padStart(2, '0');
         }
 
         // Check JPEG (ffd8ff) or PNG (89504e47)
@@ -77,6 +95,8 @@ export const ReceiptScannerPage: React.FC = () => {
   };
 
   const processSelectedFile = async (file: File) => {
+    if (isScanning || isSavingExpense) return;
+
     // 5 MB limit check (FR-18)
     if (file.size > 5 * 1024 * 1024) {
       showToast('File size exceeds the 5 MB maximum limit.', 'error');
@@ -90,85 +110,79 @@ export const ReceiptScannerPage: React.FC = () => {
       return;
     }
 
-    setSelectedFile(file);
-    setPreviewUrl(URL.createObjectURL(file));
-    setReceiptId(null);
-
     if (!getAccessToken()) {
-      runOcrSimulation(file.name);
+      showToast('Sign in before uploading a receipt.', 'error');
       return;
     }
 
-    // Execute real OCR API pipeline with progress
+    const previousFile = selectedFile;
+    const previousOcrSuccess = ocrSuccess;
+    const currentReceiptId = receiptId;
+    setSelectedFile(file);
     setIsScanning(true);
-    setScanProgress(30);
 
     try {
-      setScanProgress(60);
-      const res = await receiptsApi.uploadAndOcr(file);
-      setScanProgress(90);
+      const res = currentReceiptId
+        ? await receiptsApi.replaceReceiptImage(currentReceiptId, file)
+        : await receiptsApi.uploadAndOcr(file);
       setReceiptId(res.receiptId);
-      setOcrSuccess(res.extracted.success);
+      setReceiptConfirmed(Boolean(res.receipt.expenseId));
+      setOcrSuccess(res.ocrStatus === 'SUCCEEDED');
       setExtractedVendor(res.extracted.vendor || '');
       setExtractedAmount(res.extracted.amount?.toString() || '');
-      setExtractedDate(res.extracted.date || new Date().toISOString().substring(0, 10));
-      setExtractedCategory(res.extracted.suggestedCategoryId || mockCategories[6].id);
-      showToast('Receipt scanned by the server. Review the extracted fields.', 'success');
+      setExtractedDate(res.extracted.date || '');
+      setExtractedCategory(res.extracted.suggestedCategoryId || '');
+      setPreviewUrl(URL.createObjectURL(file));
+      showToast(
+        res.manualEntryRequired
+          ? 'Receipt uploaded. OCR was incomplete; enter the missing details manually.'
+          : 'Receipt scanned. Review the extracted fields before saving.',
+        res.manualEntryRequired ? 'info' : 'success',
+      );
     } catch (cause) {
-      setOcrSuccess(false);
-      setExtractedVendor('');
-      setExtractedAmount('');
-      setExtractedDate(new Date().toISOString().substring(0, 10));
-      setExtractedCategory(mockCategories[6].id);
+      setSelectedFile(previousFile);
+      setOcrSuccess(previousOcrSuccess);
       showToast(cause instanceof Error ? cause.message : 'Receipt scanning failed. Enter the details manually.', 'error');
     } finally {
       setIsScanning(false);
-      setScanProgress(100);
       setIsReviewModalOpen(true);
     }
   };
 
-  const runOcrSimulation = (filename: string) => {
-    setIsScanning(true);
-    setScanProgress(20);
+  const handleViewReceipt = async () => {
+    if (!receiptId) return;
+    try {
+      const image = await receiptsApi.getReceiptImage(receiptId);
+      setPreviewUrl(URL.createObjectURL(image));
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not load the uploaded receipt.', 'error');
+    }
+  };
 
-    const timer1 = setTimeout(() => setScanProgress(60), 600);
-    const timer2 = setTimeout(() => setScanProgress(90), 1200);
-
-    const timer3 = setTimeout(() => {
-      setIsScanning(false);
-      setScanProgress(100);
-
-      // Check if filename indicates a test receipt
-      if (filename.toLowerCase().includes('fail')) {
-        // Fallback to manual entry with image attached (FR-21)
-        setOcrSuccess(false);
-        setExtractedVendor('');
-        setExtractedAmount('');
-        setExtractedDate(new Date().toISOString().split('T')[0]);
-        showToast('OCR extraction unclear. Switched to manual entry with receipt attached.', 'info');
-      } else {
-        setOcrSuccess(true);
-        setExtractedVendor('Apple Store Fifth Ave');
-        setExtractedAmount('1280.50');
-        setExtractedDate('2026-09-07');
-        setExtractedCategory(mockCategories[6].id);
-        showToast('Demo OCR simulation completed; no backend request was made.', 'info');
+  const handleDeleteReceipt = async () => {
+    if (receiptId) {
+      try {
+        await receiptsApi.deleteReceipt(receiptId);
+      } catch (cause) {
+        showToast(cause instanceof Error ? cause.message : 'Could not delete the receipt.', 'error');
+        return;
       }
-      setIsReviewModalOpen(true);
-    }, 1800);
-
-    return () => {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-      clearTimeout(timer3);
-    };
+    }
+    setReceiptId(null);
+    setSelectedFile(null);
+    setPreviewUrl(null);
+    setReceiptConfirmed(false);
+    showToast('Receipt removed. Any confirmed expense remains unchanged.', 'success');
   };
 
   const handleSaveExpense = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!getAccessToken()) {
-      showToast('Sign in with a connected backend to save this expense.', 'info');
+    if (!receiptId) {
+      showToast('Upload the receipt before confirming the expense.', 'error');
+      return;
+    }
+    if (!extractedCategory) {
+      showToast('Select an expense category before confirming.', 'error');
       return;
     }
 
@@ -180,22 +194,27 @@ export const ReceiptScannerPage: React.FC = () => {
 
     setIsSavingExpense(true);
     try {
-      const expense = await transactionsApi.createExpense({
+      const result = await receiptsApi.confirmExpense(receiptId, {
         title: extractedVendor.trim(),
         amount,
         date: extractedDate,
         categoryId: extractedCategory,
-        paymentMethod: 'OTHER',
-        description: selectedFile ? `Receipt: ${selectedFile.name}` : undefined,
+        paymentMethod,
+        description: description.trim() || undefined,
       });
-      if (receiptId) {
-        await receiptsApi.associateReceipt(receiptId, expense.id);
+      if (user?.id) {
+        void queryClient.invalidateQueries({
+          queryKey: dashboardQueryKeys.financial(user.id),
+        });
       }
-      showToast(`Expense for "${extractedVendor}" ($${amount.toFixed(2)}) saved!`, 'success');
+      reloadNotifications();
+      setReceiptConfirmed(true);
+      const formattedAmount = new Intl.NumberFormat(undefined, {
+        style: 'currency',
+        currency: user?.currency ?? 'LKR',
+      }).format(amount);
+      showToast(`Expense for "${extractedVendor}" (${formattedAmount}) saved!`, 'success');
       setIsReviewModalOpen(false);
-      setSelectedFile(null);
-      setPreviewUrl(null);
-      setReceiptId(null);
     } catch (cause) {
       showToast(cause instanceof Error ? cause.message : 'Could not save this receipt expense.', 'error');
     } finally {
@@ -247,25 +266,23 @@ export const ReceiptScannerPage: React.FC = () => {
               type="button"
               className="mt-6 px-6 py-2.5 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow transition-all"
             >
-              Browse Receipt Image
+              {receiptId ? 'Replace Stored Receipt Image' : 'Browse Receipt Image'}
             </button>
           </div>
 
-          {/* OCR Processing Bar */}
+          {/* Upload and OCR progress */}
           {isScanning && (
             <div className="w-full mt-6 bg-[#F8F9FE] p-4 rounded-2xl border border-purple-100 flex flex-col gap-2">
-              <div className="flex items-center justify-between text-xs font-bold text-navy">
-                <span className="flex items-center gap-1.5 text-primary">
+              <div className="text-xs font-bold text-primary flex items-center gap-1.5">
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  Running Tesseract OCR & Heuristic Parser...
-                </span>
-                <span>{scanProgress}%</span>
+                    Uploading receipt and running OCR...
               </div>
-              <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden">
-                <div
-                  className="bg-primary h-full transition-all duration-300"
-                  style={{ width: `${scanProgress}%` }}
-                />
+              <div
+                role="progressbar"
+                aria-label="Uploading receipt and running OCR"
+                className="w-full bg-gray-200 h-2 rounded-full overflow-hidden"
+              >
+                <div className="bg-primary h-full w-1/3 animate-pulse rounded-full" />
               </div>
             </div>
           )}
@@ -288,22 +305,40 @@ export const ReceiptScannerPage: React.FC = () => {
                     className="w-full h-full object-contain"
                   />
                   <button
+                    type="button"
                     onClick={() => {
-                      setSelectedFile(null);
-                      setPreviewUrl(null);
+                      void handleDeleteReceipt();
                     }}
                     className="absolute top-3 right-3 p-2 bg-white/90 text-rose-500 rounded-full shadow-md hover:bg-rose-50"
-                    title="Remove preview"
+                    title="Delete stored receipt"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
 
+                {receiptId && (
+                  <button
+                    type="button"
+                    onClick={() => void handleViewReceipt()}
+                    className="w-full py-2 text-xs font-semibold text-primary hover:text-primary-hover"
+                  >
+                    Load secure stored image
+                  </button>
+                )}
+
+                {selectedFile && (
+                  <p className="text-[11px] text-navy-muted truncate">
+                    {selectedFile.name}
+                    {receiptConfirmed ? ' · Expense confirmed' : ''}
+                  </p>
+                )}
+
                 <button
+                  type="button"
                   onClick={() => setIsReviewModalOpen(true)}
                   className="w-full py-3 bg-navy text-white hover:bg-navy-dark text-xs font-bold rounded-full transition-all shadow-sm"
                 >
-                  Review Extracted Details
+                  {receiptConfirmed ? 'View Confirmed Expense Details' : 'Review Extracted Details'}
                 </button>
               </div>
             ) : (
@@ -311,20 +346,20 @@ export const ReceiptScannerPage: React.FC = () => {
                 <FileText className="w-10 h-10 text-gray-300 mb-2" />
                 <span className="text-xs font-semibold text-navy-muted">No image uploaded yet</span>
                 <p className="text-[11px] text-navy-muted/70 mt-1 max-w-[200px]">
-                  Uploaded receipts are scanned automatically within 15 seconds.
+                  The uploaded image stays private and is attached only after you confirm the expense.
                 </p>
               </div>
             )}
           </div>
 
-          {/* Quick OCR Spec Card */}
+          {/* Receipt privacy and manual-entry guidance */}
           <div className="bg-card-blue rounded-3xl p-5 shadow-comet">
             <h4 className="text-xs font-bold text-navy flex items-center gap-2">
               <CheckCircle className="w-4 h-4 text-emerald-600" />
-              85%+ Field Accuracy Benchmark
+              Review before saving
             </h4>
             <p className="text-[11px] text-navy/80 mt-1">
-              Extracts Vendor, Date, and Amount with automated category mapping. If OCR fails or times out (30s), system gracefully falls back to manual entry with image attached.
+              OCR suggestions can be incomplete. Edit every field as needed; an expense is created only after you confirm.
             </p>
           </div>
         </div>
@@ -357,7 +392,7 @@ export const ReceiptScannerPage: React.FC = () => {
             <div>
               <label className="block text-xs font-bold text-navy mb-1 flex items-center gap-1.5">
                 <DollarSign className="w-3.5 h-3.5 text-primary" />
-                Total Amount ($)
+                Total Amount
               </label>
               <input
                 type="number"
@@ -390,14 +425,48 @@ export const ReceiptScannerPage: React.FC = () => {
             <select
               value={extractedCategory}
               onChange={(e) => setExtractedCategory(e.target.value)}
+              required
               className="w-full px-3 py-2.5 bg-[#F8F9FE] text-xs font-medium text-navy rounded-2xl border border-gray-200 focus:outline-none focus:border-primary"
             >
-              {mockCategories.map((c) => (
+              <option value="" disabled>
+                {categoriesQuery.isLoading ? 'Loading categories...' : 'Select a category'}
+              </option>
+              {(categoriesQuery.data ?? []).map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
                 </option>
               ))}
             </select>
+            {categoriesQuery.isError && (
+              <p className="mt-1 text-[11px] text-rose-600">Could not load categories. Close and retry after reconnecting.</p>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-navy mb-1">Payment Method</label>
+              <select
+                value={paymentMethod}
+                onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}
+                className="w-full px-3 py-2.5 bg-[#F8F9FE] text-xs font-medium text-navy rounded-2xl border border-gray-200 focus:outline-none focus:border-primary"
+              >
+                <option value="CASH">Cash</option>
+                <option value="CREDIT_CARD">Credit card</option>
+                <option value="DEBIT_CARD">Debit card</option>
+                <option value="BANK_TRANSFER">Bank transfer</option>
+                <option value="OTHER">Other</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-navy mb-1">Description (optional)</label>
+              <input
+                type="text"
+                maxLength={500}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="w-full px-3 py-2.5 bg-[#F8F9FE] text-xs font-medium text-navy rounded-2xl border border-gray-200 focus:outline-none focus:border-primary"
+              />
+            </div>
           </div>
 
           <div className="flex items-center justify-end gap-3 mt-4 pt-3 border-t border-gray-100">
@@ -410,10 +479,10 @@ export const ReceiptScannerPage: React.FC = () => {
             </button>
             <button
               type="submit"
-              disabled={isSavingExpense}
+              disabled={isSavingExpense || isScanning || receiptConfirmed || !receiptId || !categoriesQuery.data?.length}
               className="px-6 py-2.5 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-full shadow-comet-glow transition-all disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {isSavingExpense ? 'Saving...' : 'Confirm & Save Expense'}
+              {isSavingExpense ? 'Saving...' : receiptConfirmed ? 'Expense Confirmed' : 'Confirm & Save Expense'}
             </button>
           </div>
         </form>

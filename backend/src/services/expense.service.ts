@@ -1,6 +1,16 @@
 import type { Prisma } from '@prisma/client';
 import prisma from '../config/database';
 import { AuthError } from './auth.service';
+import {
+  budgetScopeForExpense,
+  recalculateBudgetScopes,
+  runBudgetMonitoringTransaction,
+} from './budget-monitoring.service';
+import {
+  drainReceiptStorageCleanupQueue,
+  enqueueReceiptStorageCleanup,
+  TEMPORARY_RECEIPT_TTL_MS,
+} from './receipt-cleanup.service';
 import type {
   CreateExpenseInput,
   ExpenseQuery,
@@ -36,6 +46,30 @@ const ensureCategoryAvailable = async (userId: string, categoryId: string) => {
       'INVALID_CATEGORY'
     );
   }
+};
+
+const createExpenseInTransaction = async (
+  transaction: Prisma.TransactionClient,
+  userId: string,
+  input: CreateExpenseInput
+) => {
+  const expense = await transaction.expense.create({
+    data: {
+      userId,
+      title: input.title,
+      amount: input.amount,
+      date: input.date,
+      categoryId: input.categoryId,
+      paymentMethod: input.paymentMethod,
+      description: input.description,
+    },
+    include: { category: true },
+  });
+
+  await recalculateBudgetScopes(transaction, userId, [
+    budgetScopeForExpense(expense.date, expense.categoryId),
+  ]);
+  return expense;
 };
 
 export const getExpenses = async (userId: string, query: ExpenseQuery) => {
@@ -104,20 +138,60 @@ export const createExpense = async (
 ) => {
   await ensureCategoryAvailable(userId, input.categoryId);
 
-  const expense = await prisma.expense.create({
-    data: {
-      userId,
-      title: input.title,
-      amount: input.amount,
-      date: input.date,
-      categoryId: input.categoryId,
-      paymentMethod: input.paymentMethod,
-      description: input.description,
-    },
-    include: { category: true },
+  return runBudgetMonitoringTransaction(async (transaction) => {
+    const expense = await createExpenseInTransaction(transaction, userId, input);
+    return toExpenseResponse(expense);
   });
+};
 
-  return toExpenseResponse(expense);
+export const createExpenseWithReceipt = async (
+  userId: string,
+  receiptId: string,
+  input: CreateExpenseInput
+) => {
+  await ensureCategoryAvailable(userId, input.categoryId);
+  const uploadedAfter = new Date(Date.now() - TEMPORARY_RECEIPT_TTL_MS);
+
+  return runBudgetMonitoringTransaction(async (transaction) => {
+    const receipt = await transaction.receipt.findFirst({
+      where: { id: receiptId, userId },
+    });
+    if (!receipt) {
+      throw new AuthError('Receipt was not found.', 404, 'RECEIPT_NOT_FOUND');
+    }
+    if (receipt.expenseId) {
+      throw new AuthError('Receipt has already been confirmed.', 409, 'RECEIPT_ALREADY_CONFIRMED');
+    }
+    if (receipt.uploadedAt < uploadedAfter) {
+      throw new AuthError('Temporary receipt has expired.', 410, 'RECEIPT_EXPIRED');
+    }
+
+    const expense = await createExpenseInTransaction(transaction, userId, input);
+    const attached = await transaction.receipt.updateMany({
+      where: {
+        id: receiptId,
+        userId,
+        expenseId: null,
+        uploadedAt: { gte: uploadedAfter },
+      },
+      data: { expenseId: expense.id },
+    });
+    if (attached.count !== 1) {
+      throw new AuthError(
+        'Receipt has already been confirmed or expired.',
+        409,
+        'RECEIPT_NOT_ATTACHABLE'
+      );
+    }
+
+    const confirmedReceipt = await transaction.receipt.findUniqueOrThrow({
+      where: { id: receiptId },
+    });
+    return {
+      expense: toExpenseResponse(expense),
+      receipt: confirmedReceipt,
+    };
+  });
 };
 
 export const updateExpense = async (
@@ -138,28 +212,59 @@ export const updateExpense = async (
     await ensureCategoryAvailable(userId, input.categoryId);
   }
 
-  const expense = await prisma.expense.update({
-    where: { id: expenseId },
-    data: {
-      ...(input.title !== undefined ? { title: input.title } : {}),
-      ...(input.amount !== undefined ? { amount: input.amount } : {}),
-      ...(input.date !== undefined ? { date: input.date } : {}),
-      ...(input.categoryId !== undefined ? { categoryId: input.categoryId } : {}),
-      ...(input.paymentMethod !== undefined ? { paymentMethod: input.paymentMethod } : {}),
-      ...(input.description !== undefined ? { description: input.description } : {}),
-    },
-    include: { category: true },
-  });
+  return runBudgetMonitoringTransaction(async (transaction) => {
+    const current = await transaction.expense.findFirst({
+      where: { id: expenseId, userId },
+    });
+    if (!current) {
+      throw new AuthError('Expense was not found.', 404, 'EXPENSE_NOT_FOUND');
+    }
 
-  return toExpenseResponse(expense);
+    const expense = await transaction.expense.update({
+      where: { id: current.id },
+      data: {
+        ...(input.title !== undefined ? { title: input.title } : {}),
+        ...(input.amount !== undefined ? { amount: input.amount } : {}),
+        ...(input.date !== undefined ? { date: input.date } : {}),
+        ...(input.categoryId !== undefined ? { categoryId: input.categoryId } : {}),
+        ...(input.paymentMethod !== undefined ? { paymentMethod: input.paymentMethod } : {}),
+        ...(input.description !== undefined ? { description: input.description } : {}),
+      },
+      include: { category: true },
+    });
+
+    await recalculateBudgetScopes(transaction, userId, [
+      budgetScopeForExpense(current.date, current.categoryId),
+      budgetScopeForExpense(expense.date, expense.categoryId),
+    ]);
+    return toExpenseResponse(expense);
+  });
 };
 
 export const deleteExpense = async (userId: string, expenseId: string) => {
-  const result = await prisma.expense.deleteMany({
-    where: { id: expenseId, userId },
+  await runBudgetMonitoringTransaction(async (transaction) => {
+    const expense = await transaction.expense.findFirst({
+      where: { id: expenseId, userId },
+      select: { id: true, date: true, categoryId: true },
+    });
+    if (!expense) {
+      throw new AuthError('Expense was not found.', 404, 'EXPENSE_NOT_FOUND');
+    }
+
+    const receipt = await transaction.receipt.findFirst({
+      where: { expenseId: expense.id },
+    });
+    if (receipt) {
+      await enqueueReceiptStorageCleanup(transaction, receipt);
+    }
+
+    await transaction.expense.delete({ where: { id: expense.id } });
+    await recalculateBudgetScopes(transaction, userId, [
+      budgetScopeForExpense(expense.date, expense.categoryId),
+    ]);
   });
 
-  if (result.count === 0) {
-    throw new AuthError('Expense was not found.', 404, 'EXPENSE_NOT_FOUND');
-  }
+  await drainReceiptStorageCleanupQueue().catch((error: unknown) => {
+    console.error('[ExpenseAI receipt cleanup] Expense deletion cleanup remains queued:', error);
+  });
 };

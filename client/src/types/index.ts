@@ -11,7 +11,7 @@ export type PaymentMethod =
 export type RecurringFrequency = 'NONE' | 'WEEKLY' | 'MONTHLY';
 
 export type InsightSource = 'AI' | 'RULE';
-export type OcrStatus = 'PENDING' | 'SUCCESS' | 'FAILED';
+export type OcrStatus = 'PENDING' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED';
 
 export interface User {
   id: string;
@@ -79,26 +79,26 @@ export interface UnifiedTransaction {
 
 export interface Receipt {
   id: string;
-  expenseId?: string;
+  receiptId?: string;
+  expenseId: string | null;
   fileUrl: string;
-  fileKey?: string;
-  ocrVendor?: string;
-  ocrDate?: string;
-  ocrAmount?: number;
+  ocrVendor: string | null;
+  ocrDate: string | null;
+  ocrAmount: number | null;
   ocrStatus: OcrStatus;
-  rawOcrText?: string;
   uploadedAt: string;
 }
 
 export interface Budget {
   id: string;
   userId: string;
-  categoryId?: string | null;
-  category?: Category;
+  categoryId: string | null;
+  category: Category | null;
   month: string; // YYYY-MM
   amount: number;
-  spent?: number;
-  percentage?: number;
+  spent: number;
+  remaining: number;
+  percentage: number;
 }
 
 export interface SavingsGoal {
@@ -107,10 +107,31 @@ export interface SavingsGoal {
   name: string;
   targetAmount: number;
   savedAmount: number;
-  targetDate?: string | null;
-  color?: string;
-  remainingAmount?: number;
-  percentage?: number;
+  remainingAmount: number;
+  percentage: number;
+  isCompleted: boolean;
+  targetDate: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SavingsContribution {
+  id: string;
+  goalId: string;
+  amount: number;
+  date: string;
+  note: string | null;
+  createdAt: string;
+}
+
+export interface SavingsContributionHistory {
+  data: SavingsContribution[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
 }
 
 export interface NotificationItem {

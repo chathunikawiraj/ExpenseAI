@@ -24,9 +24,18 @@ enum OcrStatus {
   FAILED
 }
 
+enum ReceiptStorageProvider {
+  LOCAL
+  CLOUDINARY
+}
+
 enum NotificationType {
   BUDGET_ALERT
+  BUDGET_50
+  BUDGET_80
+  BUDGET_100
   SAVINGS_UPDATE
+  GOAL_COMPLETED
   SYSTEM
 }
 
@@ -122,20 +131,35 @@ model Expense {
 }
 
 model Receipt {
-  id         String    @id @default(uuid()) @db.Uuid
-  expenseId  String?   @unique @db.Uuid
-  userId     String    @db.Uuid
-  fileUrl    String
-  ocrVendor  String?
-  ocrDate    DateTime? @db.Date
-  ocrAmount  Decimal?  @db.Decimal(10, 2)
-  ocrStatus  OcrStatus @default(PENDING)
-  uploadedAt DateTime  @default(now())
+  id              String                @id @default(uuid()) @db.Uuid
+  expenseId       String?               @unique @db.Uuid
+  userId          String                @db.Uuid
+  fileUrl         String
+  storageProvider ReceiptStorageProvider @default(LOCAL)
+  storageKey      String?
+  storageFormat   String?
+  ocrVendor       String?
+  ocrDate         DateTime?             @db.Date
+  ocrAmount       Decimal?              @db.Decimal(10, 2)
+  ocrStatus       OcrStatus             @default(PENDING)
+  uploadedAt      DateTime              @default(now())
 
   expense Expense? @relation(fields: [expenseId], references: [id], onDelete: Cascade)
   user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+model ReceiptStorageCleanup {
+  id            String                @id @default(uuid()) @db.Uuid
+  provider      ReceiptStorageProvider
+  storageKey    String
+  storageFormat String?
+  attempts      Int                   @default(0)
+  availableAt   DateTime              @default(now())
+  createdAt     DateTime              @default(now())
+
+  @@index([availableAt, createdAt])
 }
 
 model Budget {
@@ -152,6 +176,8 @@ model Budget {
   thresholdEvents BudgetThresholdEvent[]
 
   @@index([userId, month])
+  @@unique([userId, month, categoryId])
+  // The migration also adds a partial unique index for overall budgets (categoryId IS NULL).
 }
 
 model BudgetThresholdEvent {

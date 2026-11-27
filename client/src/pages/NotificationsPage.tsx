@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AlertTriangle, Bell, Check, CheckCheck, ReceiptText } from 'lucide-react';
+import { AlertTriangle, Bell, Check, CheckCheck, ReceiptText, TrendingUp, Trophy } from 'lucide-react';
 import { AppShell } from '../components/layout/AppShell';
 import { useNotifications } from '../context/NotificationContext';
 import { ResourceStatus } from '../components/common/ResourceStatus';
@@ -7,8 +7,13 @@ import { ResourceStatus } from '../components/common/ResourceStatus';
 type NotificationFilter = 'all' | 'unread';
 
 const notificationDetails: Record<string, { title: string; icon: typeof Bell; color: string }> = {
-  BUDGET_80: { title: 'Budget alert', icon: AlertTriangle, color: 'text-amber-500' },
+  BUDGET_50: { title: 'Budget spending warning', icon: AlertTriangle, color: 'text-sky-600' },
+  BUDGET_80: { title: 'High budget spending', icon: AlertTriangle, color: 'text-amber-500' },
+  BUDGET_100: { title: 'Budget limit reached', icon: AlertTriangle, color: 'text-rose-600' },
+  BUDGET_ALERT: { title: 'Budget alert', icon: AlertTriangle, color: 'text-amber-500' },
   OCR_PROCESSED: { title: 'Receipt processed', icon: ReceiptText, color: 'text-emerald-500' },
+  SAVINGS_UPDATE: { title: 'Savings update', icon: TrendingUp, color: 'text-emerald-500' },
+  GOAL_COMPLETED: { title: 'Savings goal completed', icon: Trophy, color: 'text-amber-500' },
   SYSTEM: { title: 'Account update', icon: Bell, color: 'text-primary' },
 };
 
@@ -99,13 +104,19 @@ export const NotificationsPage: React.FC = () => {
               );
             })}
           </ul>
-        ) : (
+        ) : !isLoading && !error ? (
           <div className="p-10 text-center">
             <Bell className="mx-auto h-8 w-8 text-navy-muted/50" />
-            <p className="mt-3 text-sm font-bold text-navy">You're all caught up</p>
-            <p className="mt-1 text-xs text-navy-muted">There are no unread notifications.</p>
+            <p className="mt-3 text-sm font-bold text-navy">
+              {filter === 'unread' ? "You're all caught up" : 'No notifications yet'}
+            </p>
+            <p className="mt-1 text-xs text-navy-muted">
+              {filter === 'unread'
+                ? 'There are no unread notifications.'
+                : 'Notifications about your budgets and savings goals will appear here.'}
+            </p>
           </div>
-        )}
+        ) : null}
       </div>
     </AppShell>
   );

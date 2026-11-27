@@ -4,7 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "tsx --test src/__tests__/*.test.ts",
+    "test": "tsx --test --test-concurrency=1 src/__tests__/*.test.ts",
+    "test:unit": "tsx --test src/__tests__/analytics.validator.test.ts src/__tests__/budget_thresholds.unit.test.ts src/__tests__/jwt.unit.test.ts src/__tests__/notification_validation.unit.test.ts src/__tests__/planning_validation.test.ts src/__tests__/receipt-services.unit.test.ts src/__tests__/savings_goal_progress.unit.test.ts src/__tests__/testDatabaseGuard.unit.test.ts src/__tests__/validate.middleware.unit.test.ts",
+    "test:integration": "tsx --test --test-concurrency=1 src/__tests__/analytics.test.ts src/__tests__/auth.test.ts src/__tests__/budget_monitoring.integration.test.ts src/__tests__/expense.test.ts src/__tests__/income.test.ts src/__tests__/planning_account.test.ts src/__tests__/receipt.integration.test.ts src/__tests__/savings_goals.integration.test.ts src/__tests__/transaction.test.ts",
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js"
@@ -16,6 +18,7 @@
   "dependencies": {
     "@prisma/client": "^6.19.3",
     "bcrypt": "^6.0.0",
+    "cloudinary": "^2.11.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^18.0.10",
@@ -25,6 +28,7 @@
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.5.0",
     "nodemailer": "^7.0.6",
+    "sharp": "^0.35.5",
     "tesseract.js": "^7.0.0",
     "zod": "^4.6.7"
   },

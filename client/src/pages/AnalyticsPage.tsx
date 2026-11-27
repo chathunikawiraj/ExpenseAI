@@ -19,6 +19,8 @@ import { TrendingUp, PieChart, BarChart3, ArrowUpRight, ArrowDownLeft } from 'lu
 import { analyticsApi } from '../services/apiService';
 import { ResourceStatus } from '../components/common/ResourceStatus';
 import { AnalyticsTrends, CategoryBreakdown, DashboardSummary } from '../types';
+import { useAuth } from '../context/AuthContext';
+import { formatCurrency } from '../utils/formatCurrency';
 
 const tooltipContentStyle = {
   backgroundColor: '#22263A',
@@ -33,6 +35,8 @@ const tooltipLabelStyle = { color: '#F4F2FF', fontWeight: 700 };
 const tooltipItemStyle = { color: '#F4F2FF' };
 
 export const AnalyticsPage: React.FC = () => {
+  const { user } = useAuth();
+  const currency = user?.currency || 'LKR';
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [breakdown, setBreakdown] = useState<CategoryBreakdown | null>(null);
   const [trends, setTrends] = useState<AnalyticsTrends | null>(null);
@@ -67,6 +71,7 @@ export const AnalyticsPage: React.FC = () => {
   const categoryData = (breakdown?.categories ?? []).map((item, index) => ({
     name: item.name,
     value: item.amount,
+    percentage: item.percentage,
     color: ['#9275F5', '#F17D9A', '#647FEA', '#4BC9A2', '#B49AFF'][index % 5],
   }));
   const momData = (trends?.monthly ?? []).map((item) => {
@@ -111,7 +116,7 @@ export const AnalyticsPage: React.FC = () => {
           <div>
             <span className="text-xs font-semibold text-navy/70">Total Net Savings</span>
             <h3 className="text-2xl font-extrabold text-navy mt-1">
-              {summary ? `${summary.netBalance >= 0 ? '+' : '-'}$${Math.abs(summary.netBalance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+              {summary ? formatCurrency(summary.netBalance, currency) : '—'}
             </h3>
             <span className="text-[11px] font-bold text-emerald-700 flex items-center gap-1 mt-1">
               <ArrowDownLeft className="w-3.5 h-3.5" />
@@ -131,7 +136,7 @@ export const AnalyticsPage: React.FC = () => {
             </h3>
             <span className="text-[11px] text-navy-muted font-medium mt-1 block">
               {largestCategory
-                ? `$${largestCategory.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · ${largestCategory.percentage.toFixed(1)}%`
+                ? `${formatCurrency(largestCategory.amount, currency)} · ${largestCategory.percentage.toFixed(1)}%`
                 : 'No category allocation yet'}
             </span>
           </div>
@@ -144,7 +149,7 @@ export const AnalyticsPage: React.FC = () => {
           <div>
             <span className="text-xs font-semibold text-navy/70">Avg. Daily Spend</span>
             <h3 className="text-2xl font-extrabold text-navy mt-1">
-              ${averageDailySpend.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {formatCurrency(averageDailySpend, currency)}
             </h3>
             <span className="text-[11px] font-bold text-rose-600 flex items-center gap-1 mt-1">
               <ArrowUpRight className="w-3.5 h-3.5" />
@@ -176,10 +181,11 @@ export const AnalyticsPage: React.FC = () => {
                   contentStyle={tooltipContentStyle}
                   labelStyle={tooltipLabelStyle}
                   itemStyle={tooltipItemStyle}
+                  formatter={(value) => formatCurrency(Number(value), currency)}
                 />
                 <Legend iconType="circle" wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
-                <Bar dataKey="income" name="Income ($)" fill="#4BC9A2" radius={[8, 8, 0, 0]} />
-                <Bar dataKey="expense" name="Expense ($)" fill="#F17D9A" radius={[8, 8, 0, 0]} />
+                <Bar dataKey="income" name="Income" fill="#4BC9A2" radius={[8, 8, 0, 0]} />
+                <Bar dataKey="expense" name="Expense" fill="#F17D9A" radius={[8, 8, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -212,6 +218,7 @@ export const AnalyticsPage: React.FC = () => {
                   contentStyle={tooltipContentStyle}
                   labelStyle={tooltipLabelStyle}
                   itemStyle={tooltipItemStyle}
+                  formatter={(value) => formatCurrency(Number(value), currency)}
                 />
               </RechartsPie>
             </ResponsiveContainer>
@@ -221,7 +228,7 @@ export const AnalyticsPage: React.FC = () => {
             {categoryData.map((item) => (
               <div key={item.name} className="flex items-center gap-1.5 text-[11px] font-semibold text-navy">
                 <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
-                <span>{item.name}</span>
+                <span>{item.name} · {item.percentage.toFixed(1)}%</span>
               </div>
             ))}
           </div>
@@ -245,6 +252,7 @@ export const AnalyticsPage: React.FC = () => {
                 contentStyle={tooltipContentStyle}
                 labelStyle={tooltipLabelStyle}
                 itemStyle={tooltipItemStyle}
+                formatter={(value) => formatCurrency(Number(value), currency)}
               />
               <Line
                 type="monotone"

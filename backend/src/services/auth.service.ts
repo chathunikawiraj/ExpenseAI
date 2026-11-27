@@ -11,8 +11,10 @@ import {
 } from '../utils/jwt';
 import type { TokenPayload } from '../utils/jwt';
 import type { RegisterInput, UpdateProfileInput } from '../validators/auth.validator';
-import fs from 'node:fs';
-import path from 'node:path';
+import {
+  drainReceiptStorageCleanupQueue,
+  enqueueReceiptStorageCleanup,
+} from './receipt-cleanup.service';
 
 const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const VERIFICATION_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
@@ -348,16 +350,18 @@ export async function changeAuthenticatedPassword(
 export async function deleteAuthenticatedAccount(userId: string): Promise<void> {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) throw new AuthError('User not found.', 404, 'USER_NOT_FOUND');
-  const receipts = await prisma.receipt.findMany({
-    where: { userId },
-    select: { id: true },
-  });
-  const uploadsDirectory = path.resolve(process.cwd(), 'uploads');
-  if (fs.existsSync(uploadsDirectory)) {
+
+  await prisma.$transaction(async (transaction) => {
+    const receipts = await transaction.receipt.findMany({ where: { userId } });
     for (const receipt of receipts) {
-      const fileName = fs.readdirSync(uploadsDirectory).find((name) => name.startsWith(receipt.id));
-      if (fileName) fs.unlinkSync(path.join(uploadsDirectory, fileName));
+      await enqueueReceiptStorageCleanup(transaction, receipt);
     }
-  }
-  await prisma.user.delete({ where: { id: userId } });
+    await transaction.user.delete({ where: { id: userId } });
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+  });
+
+  await drainReceiptStorageCleanupQueue().catch((error: unknown) => {
+    console.error('[ExpenseAI receipt cleanup] Account deletion cleanup remains queued:', error);
+  });
 }

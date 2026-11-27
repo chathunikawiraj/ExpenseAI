@@ -1,14 +1,26 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { createWorker } from 'tesseract.js';
+import { Prisma } from '@prisma/client';
+import type { CreateExpenseInput } from '../validators/expense.validator';
 import prisma from '../config/database';
 import { AuthError } from './auth.service';
+import {
+  drainReceiptStorageCleanupQueue,
+  enqueueReceiptStorageCleanup,
+  TEMPORARY_RECEIPT_TTL_MS,
+} from './receipt-cleanup.service';
+import { validateReceiptImage } from './receipt-file-validation.service';
+import { parseReceiptText } from './receipt-parser.service';
+import { recognizeReceipt } from './receipt-ocr.service';
+import {
+  createReceiptViewUrl,
+  deleteReceiptObject,
+  getLocalReceiptPath,
+  uploadReceiptObject,
+} from './receipt-storage.service';
+import type { StoredReceiptObject } from './receipt-storage.service';
+import { createExpenseWithReceipt } from './expense.service';
 
-const uploadsDirectory = path.resolve(process.cwd(), 'uploads');
-fs.mkdirSync(uploadsDirectory, { recursive: true });
-
-export const receiptUploadDirectory = uploadsDirectory;
+const receiptFileUrl = (receiptId: string) => `/api/v1/receipts/${receiptId}/file`;
 
 const toReceiptResponse = (receipt: {
   id: string;
@@ -16,140 +28,273 @@ const toReceiptResponse = (receipt: {
   fileUrl: string;
   ocrVendor: string | null;
   ocrDate: Date | null;
-  ocrAmount: unknown;
+  ocrAmount: Prisma.Decimal | null;
   ocrStatus: 'PENDING' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED';
   uploadedAt: Date;
 }) => ({
   id: receipt.id,
-  expenseId: receipt.expenseId,
   receiptId: receipt.id,
+  expenseId: receipt.expenseId,
   fileUrl: receipt.fileUrl,
   ocrVendor: receipt.ocrVendor,
   ocrDate: receipt.ocrDate?.toISOString().slice(0, 10) ?? null,
-  ocrAmount: receipt.ocrAmount === null || receipt.ocrAmount === undefined
-    ? null
-    : Number(receipt.ocrAmount),
+  ocrAmount: receipt.ocrAmount === null ? null : Number(receipt.ocrAmount),
   ocrStatus: receipt.ocrStatus,
   uploadedAt: receipt.uploadedAt,
 });
 
-const extractVendor = (text: string) => {
-  const lines = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length >= 2);
-  return lines[0]?.replace(/[^a-zA-Z0-9 &'-]/g, '').trim().slice(0, 100) ?? null;
+const blankExtraction = {
+  vendor: null,
+  date: null,
+  amount: null,
+  suggestedCategoryId: null,
 };
 
-const extractAmount = (text: string) => {
-  const matches = text.match(/(?:total|amount|grand total)[^\d]*(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})|\d+(?:\.\d{1,2})?)/gi);
-  if (!matches?.length) return null;
-  const amount = matches[matches.length - 1].match(/(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})|\d+(?:\.\d{1,2})?)/);
-  if (!amount) return null;
-  const value = Number(amount[1].replace(/,/g, ''));
-  return Number.isFinite(value) && value > 0 ? value : null;
-};
+const extractReceiptData = async (userId: string, buffer: Buffer) => {
+  try {
+    const ocr = await recognizeReceipt(buffer);
+    if (!ocr.text) {
+      return {
+        extracted: blankExtraction,
+        ocrStatus: 'FAILED' as const,
+        confidence: ocr.confidence,
+        manualEntryRequired: true,
+      };
+    }
 
-const extractDate = (text: string) => {
-  const match = text.match(/(\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})/);
-  if (!match) return null;
-  let value: Date;
-  if (/^\d{4}-/.test(match[1])) {
-    value = new Date(`${match[1]}T00:00:00.000Z`);
-  } else {
-    const parts = match[1].split(/[/-]/).map(Number);
-    const year = parts[2] < 100 ? 2000 + parts[2] : parts[2];
-    value = new Date(Date.UTC(year, parts[1] - 1, parts[0]));
+    let categories: Array<{ id: string; name: string }> = [];
+    try {
+      categories = await prisma.category.findMany({
+        where: {
+          OR: [
+            { userId: null, isDefault: true },
+            { userId, isDefault: false },
+          ],
+        },
+        select: { id: true, name: true },
+      });
+    } catch (error) {
+      console.error('[ExpenseAI OCR] Failed to load default receipt categories:', error);
+    }
+
+    const extracted = parseReceiptText(ocr.text, categories);
+    const complete = Boolean(extracted.vendor && extracted.date && extracted.amount);
+    return {
+      extracted,
+      ocrStatus: complete ? 'SUCCEEDED' as const : 'FAILED' as const,
+      confidence: ocr.confidence,
+      manualEntryRequired: !complete,
+    };
+  } catch (error) {
+    console.warn('[ExpenseAI OCR] Receipt extraction failed; manual entry is available:', error);
+    return {
+      extracted: blankExtraction,
+      ocrStatus: 'FAILED' as const,
+      confidence: null,
+      manualEntryRequired: true,
+    };
   }
-  return Number.isNaN(value.getTime()) ? null : value;
 };
+
+const uploadImage = async (
+  receiptId: string,
+  file: Express.Multer.File
+): Promise<StoredReceiptObject> => {
+  const format = await validateReceiptImage(file);
+  return uploadReceiptObject(receiptId, file.buffer, format);
+};
+
+const cleanFailedUpload = async (stored: StoredReceiptObject) => {
+  try {
+    await deleteReceiptObject(stored.provider, stored.storageKey, stored.storageFormat);
+  } catch (cleanupError) {
+    console.error('[ExpenseAI receipt storage] Failed to clean up an unrecorded upload:', cleanupError);
+  }
+};
+
+const scanResponse = (
+  receiptId: string,
+  extraction: Awaited<ReturnType<typeof extractReceiptData>>
+) => ({
+  receiptId,
+  fileUrl: receiptFileUrl(receiptId),
+  ocrStatus: extraction.ocrStatus,
+  confidence: extraction.confidence,
+  manualEntryRequired: extraction.manualEntryRequired,
+  extracted: extraction.extracted,
+});
 
 export const uploadAndProcessReceipt = async (
   userId: string,
-  file: { originalname: string; path: string; size: number }
+  file: Express.Multer.File
 ) => {
-  const id = randomUUID();
-  const extension = path.extname(file.originalname).toLowerCase();
-  if (!['.jpg', '.jpeg', '.png'].includes(extension)) {
-    fs.unlinkSync(file.path);
-    throw new AuthError('Only JPG and PNG receipt images are supported.', 400, 'INVALID_RECEIPT_TYPE');
-  }
-  if (file.size > 5 * 1024 * 1024) {
-    fs.unlinkSync(file.path);
-    throw new AuthError('Receipt file exceeds the 5 MB limit.', 400, 'RECEIPT_TOO_LARGE');
+  const receiptId = randomUUID();
+  const stored = await uploadImage(receiptId, file);
+  let receipt;
+
+  try {
+    receipt = await prisma.receipt.create({
+      data: {
+        id: receiptId,
+        userId,
+        expenseId: null,
+        fileUrl: receiptFileUrl(receiptId),
+        storageProvider: stored.provider,
+        storageKey: stored.storageKey,
+        storageFormat: stored.storageFormat,
+        ocrStatus: 'PROCESSING',
+      },
+    });
+  } catch (error) {
+    await cleanFailedUpload(stored);
+    throw error;
   }
 
-  const bytes = fs.readFileSync(file.path).subarray(0, 8);
-  const jpeg = bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
-  const png = bytes.length >= 8 &&
-    bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 &&
-    bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a;
-  if (!jpeg && !png) {
-    fs.unlinkSync(file.path);
-    throw new AuthError('Invalid receipt image content.', 400, 'INVALID_RECEIPT_IMAGE');
-  }
-
-  const storedName = `${id}${extension}`;
-  const storedPath = path.join(uploadsDirectory, storedName);
-  fs.renameSync(file.path, storedPath);
-
-  let receipt = await prisma.receipt.create({
+  const extraction = await extractReceiptData(userId, file.buffer);
+  receipt = await prisma.receipt.update({
+    where: { id: receiptId },
     data: {
-      id,
-      userId,
-      expenseId: null,
-      fileUrl: `/api/v1/receipts/${id}/file`,
-      ocrStatus: 'PROCESSING',
+      ocrVendor: extraction.extracted.vendor,
+      ocrDate: extraction.extracted.date
+        ? new Date(`${extraction.extracted.date}T00:00:00.000Z`)
+        : null,
+      ocrAmount: extraction.extracted.amount,
+      ocrStatus: extraction.ocrStatus,
     },
   });
 
+  return {
+    ...scanResponse(receipt.id, extraction),
+    receipt: toReceiptResponse(receipt),
+  };
+};
+
+export const confirmReceiptAndCreateExpense = async (
+  userId: string,
+  receiptId: string,
+  input: CreateExpenseInput
+) => {
+  const result = await createExpenseWithReceipt(userId, receiptId, input);
+  return {
+    expense: result.expense,
+    receipt: toReceiptResponse(result.receipt),
+  };
+};
+
+export const getReceiptMetadata = async (userId: string, receiptId: string) => {
+  const receipt = await prisma.receipt.findFirst({
+    where: { id: receiptId, userId },
+  });
+  if (!receipt) {
+    throw new AuthError('Receipt was not found.', 404, 'RECEIPT_NOT_FOUND');
+  }
+  return toReceiptResponse(receipt);
+};
+
+export const getReceiptFile = async (userId: string, receiptId: string) => {
+  const receipt = await prisma.receipt.findFirst({
+    where: { id: receiptId, userId },
+  });
+  if (!receipt) {
+    throw new AuthError('Receipt was not found.', 404, 'RECEIPT_NOT_FOUND');
+  }
+
+  if (receipt.storageProvider === 'CLOUDINARY') {
+    if (!receipt.storageKey) {
+      throw new AuthError('Receipt storage reference is unavailable.', 500, 'RECEIPT_STORAGE_MISSING');
+    }
+    return { redirectUrl: createReceiptViewUrl(
+      receipt.storageProvider,
+      receipt.storageKey,
+      receipt.storageFormat
+    ) };
+  }
+
+  const filePath = await getLocalReceiptPath(receipt.id, receipt.storageKey);
+  if (!filePath) {
+    throw new AuthError('Receipt file was not found.', 404, 'RECEIPT_FILE_NOT_FOUND');
+  }
+  return { filePath };
+};
+
+export const replaceReceipt = async (
+  userId: string,
+  receiptId: string,
+  file: Express.Multer.File
+) => {
+  const current = await prisma.receipt.findFirst({
+    where: { id: receiptId, userId },
+  });
+  if (!current) {
+    throw new AuthError('Receipt was not found.', 404, 'RECEIPT_NOT_FOUND');
+  }
+
+  const replacementId = `${receiptId}-${randomUUID()}`;
+  const stored = await uploadImage(replacementId, file);
+  const extraction = await extractReceiptData(userId, file.buffer);
+
+  let updated;
   try {
-    const worker = await createWorker('eng');
-    const result = await worker.recognize(storedPath);
-    await worker.terminate();
-    const text = result.data.text;
-    const vendor = extractVendor(text);
-    const amount = extractAmount(text);
-    const date = extractDate(text);
+    updated = await prisma.$transaction(async (transaction) => {
+      const ownedReceipt = await transaction.receipt.findFirst({
+        where: { id: receiptId, userId },
+      });
+      if (!ownedReceipt) {
+        throw new AuthError('Receipt was not found.', 404, 'RECEIPT_NOT_FOUND');
+      }
 
-    const categories = await prisma.category.findMany({
-      where: {
-        OR: [{ userId: null, isDefault: true }, { userId, isDefault: false }],
-      },
+      await enqueueReceiptStorageCleanup(transaction, ownedReceipt);
+      return transaction.receipt.update({
+        where: { id: receiptId },
+        data: {
+          fileUrl: receiptFileUrl(receiptId),
+          storageProvider: stored.provider,
+          storageKey: stored.storageKey,
+          storageFormat: stored.storageFormat,
+          ocrVendor: extraction.extracted.vendor,
+          ocrDate: extraction.extracted.date
+            ? new Date(`${extraction.extracted.date}T00:00:00.000Z`)
+            : null,
+          ocrAmount: extraction.extracted.amount,
+          ocrStatus: extraction.ocrStatus,
+          uploadedAt: new Date(),
+        },
+      });
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     });
-    const lowerText = text.toLowerCase();
-    const suggestedCategory = categories.find((category) =>
-      lowerText.includes(category.name.toLowerCase())
-    ) ?? categories[0];
-
-    receipt = await prisma.receipt.update({
-      where: { id },
-      data: {
-        ocrVendor: vendor,
-        ocrAmount: amount,
-        ocrDate: date,
-        ocrStatus: vendor || amount || date ? 'SUCCEEDED' : 'FAILED',
-      },
-    });
-
-    return {
-      receiptId: receipt.id,
-      fileUrl: receipt.fileUrl,
-      extracted: {
-        vendor,
-        date: date?.toISOString().slice(0, 10) ?? null,
-        amount,
-        suggestedCategoryId: suggestedCategory?.id ?? '',
-        success: receipt.ocrStatus === 'SUCCEEDED',
-      },
-    };
   } catch (error) {
-    await prisma.receipt.update({
-      where: { id },
-      data: { ocrStatus: 'FAILED' },
-    });
+    await cleanFailedUpload(stored);
     throw error;
   }
+
+  await drainReceiptStorageCleanupQueue().catch((error: unknown) => {
+    console.error('[ExpenseAI receipt cleanup] Replacement cleanup remains queued:', error);
+  });
+  return {
+    ...scanResponse(updated.id, extraction),
+    receipt: toReceiptResponse(updated),
+  };
+};
+
+export const deleteReceipt = async (userId: string, receiptId: string) => {
+  await prisma.$transaction(async (transaction) => {
+    const receipt = await transaction.receipt.findFirst({
+      where: { id: receiptId, userId },
+    });
+    if (!receipt) {
+      throw new AuthError('Receipt was not found.', 404, 'RECEIPT_NOT_FOUND');
+    }
+
+    await enqueueReceiptStorageCleanup(transaction, receipt);
+    await transaction.receipt.delete({ where: { id: receiptId } });
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+  });
+
+  await drainReceiptStorageCleanupQueue().catch((error: unknown) => {
+    console.error('[ExpenseAI receipt cleanup] Receipt deletion remains queued:', error);
+  });
 };
 
 export const associateReceiptWithExpense = async (
@@ -157,33 +302,47 @@ export const associateReceiptWithExpense = async (
   receiptId: string,
   expenseId: string
 ) => {
-  const expense = await prisma.expense.findFirst({
-    where: { id: expenseId, userId },
+  const uploadedAfter = new Date(Date.now() - TEMPORARY_RECEIPT_TTL_MS);
+  return prisma.$transaction(async (transaction) => {
+    const receipt = await transaction.receipt.findFirst({
+      where: { id: receiptId, userId },
+    });
+    if (!receipt) {
+      throw new AuthError('Receipt was not found.', 404, 'RECEIPT_NOT_FOUND');
+    }
+    if (receipt.expenseId) {
+      throw new AuthError('Receipt has already been attached.', 409, 'RECEIPT_ALREADY_CONFIRMED');
+    }
+    if (receipt.uploadedAt < uploadedAfter) {
+      throw new AuthError('Temporary receipt has expired.', 410, 'RECEIPT_EXPIRED');
+    }
+
+    const expense = await transaction.expense.findFirst({
+      where: { id: expenseId, userId },
+      select: { id: true },
+    });
+    if (!expense) {
+      throw new AuthError('Expense was not found.', 404, 'EXPENSE_NOT_FOUND');
+    }
+
+    const attached = await transaction.receipt.updateMany({
+      where: {
+        id: receiptId,
+        userId,
+        expenseId: null,
+        uploadedAt: { gte: uploadedAfter },
+      },
+      data: { expenseId },
+    });
+    if (attached.count !== 1) {
+      throw new AuthError('Receipt has already been attached or expired.', 409, 'RECEIPT_NOT_ATTACHABLE');
+    }
+
+    return toReceiptResponse({
+      ...receipt,
+      expenseId,
+    });
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
   });
-  if (!expense) throw new AuthError('Expense was not found.', 404, 'EXPENSE_NOT_FOUND');
-  const receipt = await prisma.receipt.findFirst({ where: { id: receiptId, userId } });
-  if (!receipt) throw new AuthError('Receipt was not found.', 404, 'RECEIPT_NOT_FOUND');
-  return toReceiptResponse(await prisma.receipt.update({
-    where: { id: receiptId },
-    data: { expenseId },
-  }));
-};
-
-export const deleteReceipt = async (userId: string, receiptId: string) => {
-  const receipt = await prisma.receipt.findFirst({ where: { id: receiptId, userId } });
-  if (!receipt) throw new AuthError('Receipt was not found.', 404, 'RECEIPT_NOT_FOUND');
-  await prisma.receipt.delete({ where: { id: receiptId } });
-  const fileName = receipt.fileUrl.split('/').at(-2);
-  if (fileName) {
-    const possible = fs.readdirSync(uploadsDirectory).find((name) => name.startsWith(receipt.id));
-    if (possible) fs.unlinkSync(path.join(uploadsDirectory, possible));
-  }
-};
-
-export const getReceiptFile = async (userId: string, receiptId: string) => {
-  const receipt = await prisma.receipt.findFirst({ where: { id: receiptId, userId } });
-  if (!receipt) throw new AuthError('Receipt was not found.', 404, 'RECEIPT_NOT_FOUND');
-  const fileName = fs.readdirSync(uploadsDirectory).find((name) => name.startsWith(receipt.id));
-  if (!fileName) throw new AuthError('Receipt file was not found.', 404, 'RECEIPT_FILE_NOT_FOUND');
-  return path.join(uploadsDirectory, fileName);
 };

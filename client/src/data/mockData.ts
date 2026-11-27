@@ -151,9 +151,11 @@ export const mockBudgets: Budget[] = [
     id: 'bud_overall',
     userId: mockUser.id,
     categoryId: null,
+    category: null,
     month: '2026-09',
     amount: 3200.0,
     spent: 1887.3,
+    remaining: 1312.7,
     percentage: 58.9,
   },
   {
@@ -164,6 +166,7 @@ export const mockBudgets: Budget[] = [
     month: '2026-09',
     amount: 1600.0,
     spent: 1520.5,
+    remaining: 79.5,
     percentage: 95.0,
   },
   {
@@ -174,6 +177,7 @@ export const mockBudgets: Budget[] = [
     month: '2026-09',
     amount: 500.0,
     spent: 85.3,
+    remaining: 414.7,
     percentage: 17.0,
   },
   {
@@ -184,6 +188,7 @@ export const mockBudgets: Budget[] = [
     month: '2026-09',
     amount: 250.0,
     spent: 75.0,
+    remaining: 175.0,
     percentage: 30.0,
   },
 ];
@@ -195,8 +200,12 @@ export const mockSavingsGoals: SavingsGoal[] = [
     name: 'Trip to Tokyo',
     targetAmount: 5000,
     savedAmount: 3850,
+    remainingAmount: 1150,
+    percentage: 77,
+    isCompleted: false,
     targetDate: '2026-12-20',
-    color: '#9275F5',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
   },
   {
     id: 'goal_02',
@@ -204,8 +213,12 @@ export const mockSavingsGoals: SavingsGoal[] = [
     name: 'Emergency Fund',
     targetAmount: 10000,
     savedAmount: 8200,
+    remainingAmount: 1800,
+    percentage: 82,
+    isCompleted: false,
     targetDate: '2027-04-01',
-    color: '#4BC9A2',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
   },
   {
     id: 'goal_03',
@@ -213,8 +226,12 @@ export const mockSavingsGoals: SavingsGoal[] = [
     name: 'New M4 Studio',
     targetAmount: 2500,
     savedAmount: 1150,
+    remainingAmount: 1350,
+    percentage: 46,
+    isCompleted: false,
     targetDate: '2026-11-15',
-    color: '#F17D9A',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
   },
 ];
 
