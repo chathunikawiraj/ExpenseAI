@@ -146,6 +146,8 @@ The application is pre-seeded with two active accounts:
 Interactive Swagger/OpenAPI documentation is available at:
 👉 **[http://localhost:5000/api/v1/docs](http://localhost:5000/api/v1/docs)**
 
+The database-backed backend's receipt upload, OCR, confirmation, and management API is documented in [backend/RECEIPTS.md](./backend/RECEIPTS.md).
+
 ### Summary of REST Endpoints (`/api/v1`)
 - **Authentication**: `POST /auth/register`, `POST /auth/verify-email`, `POST /auth/resend-verification`, `POST /auth/login`, `POST /auth/logout`, `POST /auth/refresh`, `POST /auth/forgot-password`, `POST /auth/reset-password`, `GET /auth/me`, `PUT /auth/profile`, `DELETE /auth/account`.
 - **Transactions**: `GET /transactions` (globally sorted and paginated income/expense records), `GET/POST /incomes`, `PUT/DELETE /incomes/:id`, `GET/POST /expenses`, `PUT/DELETE /expenses/:id`, `GET/POST /categories`.
@@ -153,10 +155,10 @@ Interactive Swagger/OpenAPI documentation is available at:
 - **Dashboard Analytics**: `GET /analytics/category-breakdown` and `GET /analytics/trends?months=6` provide database-backed category allocations and monthly/daily chart data.
 - **Budgets & Goals**: `GET/POST /budgets`, `DELETE /budgets/:id`, `GET/POST /goals`, `PUT/PATCH /goals/:id`, `POST /goals/:id/contributions`, and `DELETE /goals/:id`.
 - **Notifications & Insights**: `GET/PATCH/DELETE /notifications`, `PATCH /notifications/read-all`, `GET /insights`, and `POST /insights/generate`.
-- **Receipts**: `POST /receipts` uploads an authenticated JPG/PNG receipt for OCR, `PATCH /receipts/:id/associate` links it to an expense, `GET /receipts/:id/file` serves it securely, and `DELETE /receipts/:id` removes it.
+- **Receipts**: The database-backed upload, OCR, confirmation, secure-view, replacement, and deletion endpoints are listed in [backend/RECEIPTS.md](./backend/RECEIPTS.md).
 - **Account Security**: `PUT /auth/password` changes the password after current-password verification; `DELETE /auth/account` requires `{ "confirmation": "DELETE" }`.
 - **Budgets & Goals**: `GET/POST /budgets`, `DELETE /budgets/:id`, `GET/POST/PUT/DELETE /goals`.
-- **Receipts & OCR**: `POST /receipts` (Multipart upload with magic-byte validation & Tesseract OCR), `DELETE /receipts/:id`.
+- **Receipts & OCR**: `POST /receipts/scan`, `POST /receipts/confirm`, `GET/PUT/DELETE /receipts/:id`, and secure image viewing; see [backend/RECEIPTS.md](./backend/RECEIPTS.md).
 - **Analytics & Export**: `GET /analytics/summary`, `GET /analytics/trends`, `GET /reports/:month`, `GET /export/csv` (Formula-injection protected).
 - **AI Insights**: `GET /insights`, `POST /insights/generate` (Aggregated figures only, zero PII).
 - **Admin**: `GET /admin/stats`, `GET /admin/users`, `PATCH /admin/users/:id/status`, `DELETE /admin/users/:id`, `GET/POST/DELETE /admin/categories`.
@@ -176,10 +178,26 @@ Copy `.env.example` to `.env` in the root or individual packages:
 | `JWT_REFRESH_SECRET` | *(32+ char secret)* | Secret key for 7-day httpOnly refresh cookies |
 | `CLIENT_URL` | `http://localhost:5173` | Allowed CORS frontend origin |
 | `OPENAI_API_KEY` | *(Optional)* | OpenAI API key for AI insights (falls back to rule engine if absent) |
-| `CLOUDINARY_CLOUD_NAME` | *(Optional)* | Cloudinary cloud name (falls back to local `/uploads` if absent) |
-| `CLOUDINARY_API_KEY` | *(Optional)* | Cloudinary API key |
-| `CLOUDINARY_API_SECRET` | *(Optional)* | Cloudinary API secret |
+| `CLOUDINARY_CLOUD_NAME` | *(Local development optional)* | Cloudinary cloud name (local development uses backend `uploads/` when unset) |
+| `CLOUDINARY_API_KEY` | *(Local development optional)* | Cloudinary API key; all three Cloudinary values are required in production |
+| `CLOUDINARY_API_SECRET` | *(Local development optional)* | Cloudinary API secret; never expose it to the frontend |
 | `VITE_API_BASE_URL` | `http://localhost:5000/api/v1` | Backend API base URL consumed by Vite frontend |
+
+### Phase 7 receipt service (`backend/`)
+
+For the database-backed receipt API, configure `backend/.env` from [backend/.env.example](./backend/.env.example). Cloudinary is optional for local development, where validated images are stored under `backend/uploads/`; production requires `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET`. Tesseract.js runs on the backend and fetches its English model from jsDelivr on first use, so allow backend outbound network access. No OpenAI key is used for OCR.
+
+After reviewing and backing up the target database, apply pending backend migrations and generate the Prisma client from the backend directory:
+
+```bash
+cd backend
+npm install
+npx prisma migrate deploy
+npx prisma generate
+npm run build
+```
+
+`migrate deploy` applies every pending migration in `backend/prisma/migrations`; review the pending migration set before running it. Never use `prisma migrate reset` or `prisma db push` for this setup.
 
 ---
 

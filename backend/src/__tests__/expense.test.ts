@@ -2,9 +2,12 @@ import 'dotenv/config';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Server } from 'node:http';
+import { assertSafeTestDatabase } from '../test-utils/testDatabaseGuard.js';
 import app from '../app.js';
 import prisma from '../config/database.js';
 import { signAccessToken } from '../utils/jwt.js';
+
+assertSafeTestDatabase();
 
 test('expense CRUD validates categories, filters results, and isolates users', async () => {
   await prisma.$connect();
@@ -158,6 +161,31 @@ test('expense CRUD validates categories, filters results, and isolates users', a
       },
     });
     assert.equal(otherUserRead.status, 404);
+
+    const otherUserUpdate = await fetch(`${baseUrl}/${first.id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${otherToken}`,
+      },
+      body: JSON.stringify({ amount: 999 }),
+    });
+    assert.equal(otherUserUpdate.status, 404);
+
+    const otherUserDelete = await fetch(`${baseUrl}/${first.id}`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${otherToken}`,
+      },
+    });
+    assert.equal(otherUserDelete.status, 404);
+
+    const unchangedExpense = await prisma.expense.findUnique({
+      where: { id: first.id },
+      select: { amount: true },
+    });
+    assert.equal(unchangedExpense?.amount.toFixed(2), '11.50');
 
     const invalidCategoryUpdate = await fetch(`${baseUrl}/${first.id}`, {
       method: 'PATCH',

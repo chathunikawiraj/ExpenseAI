@@ -15,17 +15,18 @@ const analyticsDateSchema = z
   }, 'Date must be a valid calendar date.')
   .transform((value) => new Date(`${value}T00:00:00.000Z`));
 
+const analyticsMonthSchema = z
+  .string()
+  .trim()
+  .regex(/^\d{4}-\d{2}$/, 'Month must use YYYY-MM format.')
+  .refine((value) => {
+    const [year, month] = value.split('-').map(Number);
+    return year >= 2000 && month >= 1 && month <= 12;
+  }, 'Month must be a valid month.');
+
 export const analyticsSummaryQuerySchema = z
   .object({
-    month: z
-      .string()
-      .trim()
-      .regex(/^\d{4}-\d{2}$/, 'Month must use YYYY-MM format.')
-      .refine((value) => {
-        const [year, month] = value.split('-').map(Number);
-        return year >= 2000 && month >= 1 && month <= 12;
-      }, 'Month must be a valid month.')
-      .optional(),
+    month: analyticsMonthSchema.optional(),
     startDate: analyticsDateSchema.optional(),
     endDate: analyticsDateSchema.optional(),
   })
@@ -60,8 +61,11 @@ export const analyticsDateRangeQuerySchema = z
     { message: 'startDate must be on or before endDate.', path: ['endDate'] }
   );
 
+// When both are supplied, `month` controls the requested period. `months` is
+// still validated against its 1-24 range, even when `month` is present.
 export const analyticsTrendsQuerySchema = z
   .object({
+    month: analyticsMonthSchema.optional(),
     months: z.coerce.number().int().min(1).max(24).default(6),
   })
   .strict();

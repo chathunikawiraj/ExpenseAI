@@ -5,12 +5,17 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
 } from '../services/notifications.service';
+import { notificationIdSchema } from '../validators/notification.validator';
 
 export const getNotifications: RequestHandler = async (req, res) => {
   res.status(200).json(await listNotifications(req.authUser!.userId));
 };
 
 export const readNotification: RequestHandler = async (req, res) => {
+  if (!notificationIdSchema.safeParse(req.params.id).success) {
+    res.status(400).json({ error: 'Notification ID must be a valid UUID.' });
+    return;
+  }
   await markNotificationRead(req.authUser!.userId, req.params.id as string);
   res.status(200).json({ message: 'Notification marked as read.' });
 };
@@ -21,6 +26,10 @@ export const readAllNotifications: RequestHandler = async (req, res) => {
 };
 
 export const removeNotification: RequestHandler = async (req, res) => {
+  if (!notificationIdSchema.safeParse(req.params.id).success) {
+    res.status(400).json({ error: 'Notification ID must be a valid UUID.' });
+    return;
+  }
   await deleteNotification(req.authUser!.userId, req.params.id as string);
   res.status(200).json({ message: 'Notification deleted.' });
 };

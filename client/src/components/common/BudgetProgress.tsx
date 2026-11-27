@@ -1,8 +1,11 @@
 import React from 'react';
+import { formatCurrency } from '../../utils/formatCurrency';
 
 interface BudgetProgressProps {
   spent: number;
   total: number;
+  currency?: string;
+  percentage?: number;
   showLabels?: boolean;
   size?: 'sm' | 'md' | 'lg';
   className?: string;
@@ -11,18 +14,22 @@ interface BudgetProgressProps {
 export const BudgetProgress: React.FC<BudgetProgressProps> = ({
   spent,
   total,
+  currency = 'USD',
+  percentage: providedPercentage,
   showLabels = true,
   size = 'md',
   className = '',
 }) => {
-  const percentage = total > 0 ? Math.min(Math.round((spent / total) * 100), 100) : 0;
-  const isOver = spent > total;
+  const rawPercentage = providedPercentage ?? (total > 0 ? (spent / total) * 100 : 0);
+  const percentage = Math.max(rawPercentage, 0);
+  const barPercentage = Math.min(percentage, 100);
+  const isOver = percentage >= 100;
 
   let barColor = 'bg-emerald-500';
   let badgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-200';
   let statusText = 'On Track';
 
-  if (isOver || percentage >= 100) {
+  if (isOver) {
     barColor = 'bg-rose-500';
     badgeColor = 'bg-rose-50 text-rose-700 border-rose-200';
     statusText = 'Exceeded';
@@ -43,14 +50,14 @@ export const BudgetProgress: React.FC<BudgetProgressProps> = ({
       {showLabels && (
         <div className="flex items-center justify-between text-xs">
           <div className="flex items-center gap-2">
-            <span className="font-bold text-navy">${spent.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-            <span className="text-navy-muted">of ${total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            <span className="font-bold text-navy">{formatCurrency(spent, currency)}</span>
+            <span className="text-navy-muted">of {formatCurrency(total, currency)}</span>
           </div>
           <div className="flex items-center gap-2">
             <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${badgeColor}`}>
               {statusText}
             </span>
-            <span className="font-bold text-navy">{percentage}%</span>
+            <span className="font-bold text-navy">{percentage.toFixed(1)}%</span>
           </div>
         </div>
       )}
@@ -63,7 +70,7 @@ export const BudgetProgress: React.FC<BudgetProgressProps> = ({
 
         <div
           className={`${barColor} h-full rounded-full transition-all duration-500 ease-out`}
-          style={{ width: `${Math.min(percentage, 100)}%` }}
+          style={{ width: `${barPercentage}%` }}
         />
       </div>
     </div>

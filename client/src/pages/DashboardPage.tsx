@@ -1,134 +1,318 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AppShell } from '../components/layout/AppShell';
 import { WelcomeCard } from '../components/dashboard/WelcomeCard';
 import { SpendingTrendChart } from '../components/dashboard/SpendingTrendChart';
 import { CategorySpendingCard } from '../components/dashboard/CategorySpendingCard';
 import { RightPanelSummary } from '../components/dashboard/RightPanelSummary';
+import { BudgetProgress } from '../components/common/BudgetProgress';
 import { ResourceStatus } from '../components/common/ResourceStatus';
-import { analyticsApi, transactionsApi } from '../services/apiService';
-import { Expense, Income, Category, DashboardSummary, AnalyticsTrends, CategoryBreakdown } from '../types';
+import { Skeleton } from '../components/common/EmptyState';
+import { analyticsApi, budgetsApi, transactionsApi } from '../services/apiService';
 import { useAuth } from '../context/AuthContext';
 import { Sparkles } from 'lucide-react';
+import { formatCurrency } from '../utils/formatCurrency';
+import { dashboardQueryKeys } from '../services/dashboardQueryKeys';
+
+const currentLocalMonth = (): string => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+};
+
+const monthDateRange = (month: string) => {
+  const [year, monthNumber] = month.split('-').map(Number);
+  const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+  return {
+    startDate: `${month}-01`,
+    endDate: `${month}-${String(lastDay).padStart(2, '0')}`,
+  };
+};
+
+const monthLabel = (month: string): string => {
+  const [year, monthNumber] = month.split('-').map(Number);
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  }).format(new Date(Date.UTC(year, monthNumber - 1, 1)));
+};
+
+const errorMessage = (cause: unknown): string =>
+  cause instanceof Error ? cause.message : 'The server request failed.';
 
 export const DashboardPage: React.FC = () => {
   const { user } = useAuth();
-  const [incomes, setIncomes] = useState<Income[]>([]);
-  const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [summary, setSummary] = useState<DashboardSummary | null>(null);
-  const [trends, setTrends] = useState<AnalyticsTrends | null>(null);
-  const [breakdown, setBreakdown] = useState<CategoryBreakdown | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [refreshCount, setRefreshCount] = useState(0);
+  const userId = user?.id;
+  const queryUserId = userId ?? '';
+  const currency = user?.currency || 'LKR';
+  const [selectedMonth, setSelectedMonth] = useState(currentLocalMonth);
+  const queryClient = useQueryClient();
+  const { startDate, endDate } = monthDateRange(selectedMonth);
 
-  const loadDashboardData = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const [incomeResult, expenseResult, nextCategories, nextSummary, nextTrends, nextBreakdown] = await Promise.all([
-        transactionsApi.getIncomes({ page: 1, limit: 20, sortBy: 'date', order: 'desc' }),
-        transactionsApi.getExpenses({ page: 1, limit: 20, sortBy: 'date', order: 'desc' }),
-        transactionsApi.getCategories(),
-        analyticsApi.getSummary(),
-        analyticsApi.getTrends(12),
-        analyticsApi.getCategoryBreakdown(),
-      ]);
-      setIncomes(incomeResult.data);
-      setExpenses(expenseResult.data);
-      setCategories(nextCategories);
-      setSummary(nextSummary);
-      setTrends(nextTrends);
-      setBreakdown(nextBreakdown);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'The server request failed.');
-      setIncomes([]);
-      setExpenses([]);
-      setCategories([]);
-      setSummary(null);
-      setTrends(null);
-      setBreakdown(null);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+  const summaryQuery = useQuery({
+    queryKey: dashboardQueryKeys.summary(queryUserId, selectedMonth),
+    queryFn: () => analyticsApi.getSummary(selectedMonth),
+    enabled: Boolean(userId),
+  });
+  const categoryBreakdownQuery = useQuery({
+    queryKey: dashboardQueryKeys.categoryBreakdown(queryUserId, selectedMonth),
+    queryFn: () => analyticsApi.getCategoryBreakdown(startDate, endDate),
+    enabled: Boolean(userId),
+  });
+  const budgetsQuery = useQuery({
+    queryKey: dashboardQueryKeys.budgetMonth(queryUserId, selectedMonth),
+    queryFn: () => budgetsApi.getBudgets(selectedMonth),
+    enabled: Boolean(userId),
+  });
+  const trendsQuery = useQuery({
+    queryKey: dashboardQueryKeys.trends(queryUserId, 12),
+    queryFn: () => analyticsApi.getTrends(12),
+    enabled: Boolean(userId),
+  });
+  const recentTransactionsQuery = useQuery({
+    queryKey: dashboardQueryKeys.recentTransactions(queryUserId),
+    queryFn: () => transactionsApi.getTransactions({
+      page: 1,
+      limit: 20,
+      sortBy: 'date',
+      order: 'desc',
+    }),
+    enabled: Boolean(userId),
+  });
+  const categoriesQuery = useQuery({
+    queryKey: dashboardQueryKeys.categories(queryUserId),
+    queryFn: () => transactionsApi.getCategories(),
+    enabled: Boolean(userId),
+  });
+  const incomeFallbackQuery = useQuery({
+    queryKey: dashboardQueryKeys.incomeFallback(queryUserId),
+    queryFn: () => transactionsApi.getIncomes({
+      page: 1,
+      limit: 20,
+      sortBy: 'date',
+      order: 'desc',
+    }),
+    enabled: Boolean(userId) && trendsQuery.isError,
+  });
+  const expenseFallbackQuery = useQuery({
+    queryKey: dashboardQueryKeys.expenseFallback(queryUserId),
+    queryFn: () => transactionsApi.getExpenses({
+      page: 1,
+      limit: 20,
+      sortBy: 'date',
+      order: 'desc',
+    }),
+    enabled: Boolean(userId) && trendsQuery.isError,
+  });
 
-  useEffect(() => {
-    void loadDashboardData();
-  }, [loadDashboardData, refreshCount]);
+  const summary = summaryQuery.isError ? null : summaryQuery.data ?? null;
+  const breakdown = categoryBreakdownQuery.isError ? null : categoryBreakdownQuery.data ?? null;
+  const budgets = budgetsQuery.isError ? null : budgetsQuery.data ?? null;
+  const categories = categoriesQuery.isError ? [] : categoriesQuery.data ?? [];
+  const recentTransactions = recentTransactionsQuery.isError
+    ? []
+    : recentTransactionsQuery.data?.data ?? [];
+  const trends = trendsQuery.isError ? null : trendsQuery.data ?? null;
+  const incomes = incomeFallbackQuery.isError ? [] : incomeFallbackQuery.data?.data ?? [];
+  const expenses = expenseFallbackQuery.isError ? [] : expenseFallbackQuery.data?.data ?? [];
+  const isPeriodLoading =
+    summaryQuery.isLoading || categoryBreakdownQuery.isLoading || budgetsQuery.isLoading;
+  const isSupportingLoading =
+    trendsQuery.isLoading ||
+    recentTransactionsQuery.isLoading ||
+    categoriesQuery.isLoading ||
+    incomeFallbackQuery.isLoading ||
+    expenseFallbackQuery.isLoading;
+  const isLoading = isPeriodLoading || isSupportingLoading;
+  const errors = [
+    ...(summaryQuery.isError ? [`Monthly summary: ${errorMessage(summaryQuery.error)}`] : []),
+    ...(categoryBreakdownQuery.isError
+      ? [`Category spending: ${errorMessage(categoryBreakdownQuery.error)}`]
+      : []),
+    ...(budgetsQuery.isError ? [`Budget performance: ${errorMessage(budgetsQuery.error)}`] : []),
+    ...(trendsQuery.isError ? [`Spending trends: ${errorMessage(trendsQuery.error)}`] : []),
+    ...(recentTransactionsQuery.isError
+      ? [`Recent transactions: ${errorMessage(recentTransactionsQuery.error)}`]
+      : []),
+    ...(categoriesQuery.isError ? [`Categories: ${errorMessage(categoriesQuery.error)}`] : []),
+    ...(incomeFallbackQuery.isError
+      ? [`Income fallback: ${errorMessage(incomeFallbackQuery.error)}`]
+      : []),
+    ...(expenseFallbackQuery.isError
+      ? [`Expense fallback: ${errorMessage(expenseFallbackQuery.error)}`]
+      : []),
+  ];
+  const overallBudget = budgets?.find((budget) => budget.categoryId === null);
+  const categoryBudgets = budgets?.filter((budget) => budget.categoryId !== null) ?? [];
+  const selectedMonthLabel = monthLabel(selectedMonth);
+  const retryDashboard = () => {
+    void queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.financial(queryUserId) });
+    void queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.categories(queryUserId) });
+  };
 
   return (
     <AppShell
       rightPanel={
         <RightPanelSummary
           balance={summary?.netBalance ?? null}
-          dateStr={new Date().toLocaleDateString(undefined, {
-            weekday: 'long',
-            day: '2-digit',
-            month: 'long',
-            year: 'numeric',
-          })}
-          recentExpenses={expenses}
+          periodLabel={selectedMonthLabel}
+          currency={currency}
+          recentTransactions={recentTransactions}
+          isLoading={recentTransactionsQuery.isLoading}
+          error={recentTransactionsQuery.isError
+            ? errorMessage(recentTransactionsQuery.error)
+            : null}
         />
       }
     >
-      {/* Dashboard Top Title with Rocket Emoji matching reference */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl sm:text-3xl font-extrabold text-navy tracking-tight flex items-center gap-2">
           <span>My Dashboard</span>
           <span className="text-2xl">🚀</span>
         </h1>
+        <label className="flex items-center gap-3 rounded-2xl bg-white px-4 py-2.5 text-xs font-semibold text-navy shadow-comet">
+          Month
+          <input
+            type="month"
+            aria-label="Select dashboard month"
+            value={selectedMonth}
+            onChange={(event) => {
+              if (event.target.value) setSelectedMonth(event.target.value);
+            }}
+            className="min-w-0 rounded-lg border border-gray-200 bg-transparent px-2 py-1 text-navy"
+          />
+        </label>
       </div>
 
       <ResourceStatus
         isLoading={isLoading}
-        error={error}
-        onRetry={() => setRefreshCount((count) => count + 1)}
+        error={errors.length > 0 ? errors.join(' ') : null}
+        onRetry={retryDashboard}
       />
       <p className="text-[11px] text-navy-muted">
-        Summary totals include all account records. Trend and category cards use up to the latest 20 records per type.
+        Income, expenses, categories, and budgets for {selectedMonthLabel}.
       </p>
 
-      {!isLoading && !error && summary && (
+      {summary && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="card-hover bg-white rounded-3xl p-5 shadow-comet border border-emerald-100/60">
             <p className="text-[11px] font-bold uppercase tracking-wide text-navy-muted">Total Income</p>
             <p className="mt-2 text-2xl font-extrabold text-emerald-600">
-              ${summary.totalIncome.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {formatCurrency(summary.totalIncome, currency)}
             </p>
           </div>
           <div className="card-hover bg-white rounded-3xl p-5 shadow-comet border border-rose-100/60">
             <p className="text-[11px] font-bold uppercase tracking-wide text-navy-muted">Total Expenses</p>
             <p className="mt-2 text-2xl font-extrabold text-rose-500">
-              ${summary.totalExpenses.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {formatCurrency(summary.totalExpenses, currency)}
             </p>
           </div>
           <div className="card-hover bg-white rounded-3xl p-5 shadow-comet border border-purple-100/60">
             <p className="text-[11px] font-bold uppercase tracking-wide text-navy-muted">Net Balance</p>
             <p className="mt-2 text-2xl font-extrabold text-navy">
-              ${summary.netBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {formatCurrency(summary.netBalance, currency)}
             </p>
-            <p className="mt-1 text-[10px] text-navy-muted">{summary.transactionCount} transactions</p>
+            <p className="mt-1 text-[10px] text-navy-muted">
+              {summary.transactionCount} transactions
+            </p>
           </div>
         </div>
       )}
+      {!isPeriodLoading && !summary && (
+        <p role="alert" className="text-xs text-navy-muted">Monthly summary is unavailable.</p>
+      )}
 
-      {/* 2x2 Grid of Main Cards matching the reference layout */}
+      <section className="card-hover bg-white rounded-4xl p-6 sm:p-7 shadow-comet">
+        <div className="mb-5">
+          <h2 className="text-xl font-bold text-navy">Budget Performance</h2>
+          <p className="text-xs text-navy-muted mt-0.5">{selectedMonthLabel}</p>
+        </div>
+        {isPeriodLoading ? (
+          <div className="flex flex-col gap-3">
+            <Skeleton className="h-5 w-1/3" />
+            <Skeleton className="h-12 w-full" />
+          </div>
+        ) : budgetsQuery.isError ? (
+          <p role="alert" className="text-xs text-navy-muted">Budget performance could not be loaded.</p>
+        ) : !overallBudget ? (
+          <p className="rounded-2xl border border-dashed border-gray-200 p-5 text-center text-sm text-navy-muted">
+            No overall budget set for {selectedMonthLabel}.
+          </p>
+        ) : (
+          <div className="rounded-3xl bg-[#F8F9FE] p-5">
+            <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="font-bold text-navy">Overall monthly budget</h3>
+                <p className="mt-1 text-xs text-navy-muted">
+                  Budget amount: {formatCurrency(overallBudget.amount, currency)}
+                </p>
+              </div>
+              <div className="text-right text-xs text-navy-muted">
+                <p>Remaining</p>
+                <p className="mt-1 font-bold text-navy">{formatCurrency(overallBudget.remaining, currency)}</p>
+              </div>
+            </div>
+            <BudgetProgress
+              spent={overallBudget.spent}
+              total={overallBudget.amount}
+              percentage={overallBudget.percentage}
+              currency={currency}
+            />
+          </div>
+        )}
+
+        {!isPeriodLoading && !budgetsQuery.isError && budgets && (
+          <div className="mt-6">
+            <h3 className="mb-3 text-sm font-bold text-navy">Category budgets</h3>
+            {categoryBudgets.length > 0 ? (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                {categoryBudgets.map((budget) => (
+                  <div key={budget.id} className="rounded-3xl border border-gray-100 p-4">
+                    <div className="mb-3 flex items-start justify-between gap-3">
+                      <p className="truncate text-sm font-bold text-navy">
+                        {budget.category?.name ?? 'Category'}
+                      </p>
+                      <p className="whitespace-nowrap text-xs text-navy-muted">
+                        Remaining {formatCurrency(budget.remaining, currency)}
+                      </p>
+                    </div>
+                    <BudgetProgress
+                      spent={budget.spent}
+                      total={budget.amount}
+                      percentage={budget.percentage}
+                      currency={currency}
+                      size="sm"
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-navy-muted">No category budgets set for this month.</p>
+            )}
+          </div>
+        )}
+      </section>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
-        {/* Card 1: Welcome Card with Illustrated Character */}
         <WelcomeCard name={user?.name || 'there'} />
 
-        {/* Card 2: Dispute Progress / Spending Trend Chart */}
         <SpendingTrendChart
           incomes={incomes}
           expenses={expenses}
           analyticsTrends={trends}
+          currency={currency}
         />
 
-        {/* Card 3: Credit by Categories Card */}
-        <CategorySpendingCard categories={categories} expenses={expenses} breakdown={breakdown} />
+        <CategorySpendingCard
+          categories={categories}
+          breakdown={breakdown}
+          currency={currency}
+          isLoading={categoryBreakdownQuery.isLoading || categoriesQuery.isLoading}
+          error={categoryBreakdownQuery.isError
+            ? errorMessage(categoryBreakdownQuery.error)
+            : null}
+        />
 
-        {/* Card 4: Credit Reports / AI Insights Carousel */}
         <div className="card-hover bg-white rounded-4xl p-7 shadow-comet flex flex-col items-center justify-center text-center">
           <Sparkles className="w-6 h-6 text-primary mb-3" />
           <h3 className="text-xl font-bold text-navy">Insights</h3>

@@ -17,6 +17,9 @@ const envSchema = z.object({
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
   SMTP_FROM: z.string().optional(),
+  CLOUDINARY_CLOUD_NAME: z.string().optional().default(''),
+  CLOUDINARY_API_KEY: z.string().optional().default(''),
+  CLOUDINARY_API_SECRET: z.string().optional().default(''),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);
@@ -36,11 +39,26 @@ if (mailConfiguredCount !== 0 && mailConfiguredCount !== mailFields.length) {
   throw new Error('SMTP_HOST, SMTP_USER, SMTP_PASS, and SMTP_FROM must all be configured together.');
 }
 
+const cloudinaryFields = [
+  parsedEnv.data.CLOUDINARY_CLOUD_NAME,
+  parsedEnv.data.CLOUDINARY_API_KEY,
+  parsedEnv.data.CLOUDINARY_API_SECRET,
+];
+const cloudinaryConfiguredCount = cloudinaryFields.filter(Boolean).length;
+if (cloudinaryConfiguredCount !== 0 && cloudinaryConfiguredCount !== cloudinaryFields.length) {
+  throw new Error(
+    'CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET must be configured together.'
+  );
+}
+
 if (parsedEnv.data.NODE_ENV === 'production' && (mailConfiguredCount !== mailFields.length ||
+    cloudinaryConfiguredCount !== cloudinaryFields.length ||
     parsedEnv.data.JWT_SECRET === 'expenseai-development-access-secret-change-me' ||
     parsedEnv.data.JWT_REFRESH_SECRET === 'expenseai-development-refresh-secret-change-me' ||
     parsedEnv.data.JWT_SECRET === parsedEnv.data.JWT_REFRESH_SECRET)) {
-  throw new Error('Production requires SMTP configuration and two distinct non-default JWT secrets.');
+  throw new Error(
+    'Production requires SMTP and Cloudinary configuration and two distinct non-default JWT secrets.'
+  );
 }
 
 export const env = parsedEnv.data;

@@ -64,15 +64,26 @@ export const getAnalyticsSummary = async (
 };
 
 interface MonthlyTrendRow {
-  month: Date;
+  month: string;
   income: unknown;
   expense: unknown;
 }
 
 interface DailyTrendRow {
-  date: Date;
+  date: string;
+  income: unknown;
   expense: unknown;
 }
+
+const utcDateOnly = (date: Date): string =>
+  `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+
+const shiftUtcDays = (date: Date, days: number): Date =>
+  new Date(Date.UTC(
+    date.getUTCFullYear(),
+    date.getUTCMonth(),
+    date.getUTCDate() + days,
+  ));
 
 export const getCategoryBreakdown = async (
   userId: string,
@@ -127,34 +138,60 @@ export const getAnalyticsTrends = async (
   query: AnalyticsTrendsQuery
 ) => {
   const now = new Date();
-  const startMonth = new Date(Date.UTC(
+  const currentMonthStart = new Date(Date.UTC(
     now.getUTCFullYear(),
-    now.getUTCMonth() - (query.months - 1),
-    1
+    now.getUTCMonth(),
+    1,
   ));
+  const monthStart = query.month
+    ? new Date(`${query.month}-01T00:00:00.000Z`)
+    : new Date(Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth() - (query.months - 1),
+        1,
+      ));
+  const monthEndExclusive = query.month
+    ? new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 1))
+    : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  const monthSeriesEnd = query.month ? monthStart : currentMonthStart;
+  const todayUtc = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+  ));
+  const dailyStart = query.month ? monthStart : shiftUtcDays(todayUtc, -29);
+  const dailyEndExclusive = query.month ? monthEndExclusive : shiftUtcDays(todayUtc, 1);
+  const monthlyStartDate = utcDateOnly(monthStart);
+  const monthlyEndDate = utcDateOnly(monthEndExclusive);
+  const dailyStartDate = utcDateOnly(dailyStart);
+  const dailyEndDate = utcDateOnly(dailyEndExclusive);
 
   const monthlyRows = await prisma.$queryRaw<MonthlyTrendRow[]>(Prisma.sql`
     WITH "income_monthly" AS (
-      SELECT date_trunc('month', "date") AS "month", sum("amount")::numeric AS "income"
+      SELECT date_trunc('month', "date"::timestamp) AS "month", sum("amount")::numeric AS "income"
       FROM "Income"
-      WHERE "userId" = ${userId}::uuid AND "date" >= ${startMonth}
-      GROUP BY date_trunc('month', "date")
+      WHERE "userId" = ${userId}::uuid
+        AND "date" >= ${monthlyStartDate}::date
+        AND "date" < ${monthlyEndDate}::date
+      GROUP BY date_trunc('month', "date"::timestamp)
     ),
     "expense_monthly" AS (
-      SELECT date_trunc('month', "date") AS "month", sum("amount")::numeric AS "expense"
+      SELECT date_trunc('month', "date"::timestamp) AS "month", sum("amount")::numeric AS "expense"
       FROM "Expense"
-      WHERE "userId" = ${userId}::uuid AND "date" >= ${startMonth}
-      GROUP BY date_trunc('month', "date")
+      WHERE "userId" = ${userId}::uuid
+        AND "date" >= ${monthlyStartDate}::date
+        AND "date" < ${monthlyEndDate}::date
+      GROUP BY date_trunc('month', "date"::timestamp)
     ),
     "months" AS (
       SELECT generate_series(
-        ${startMonth},
-        date_trunc('month', ${now}),
+        ${monthlyStartDate}::date::timestamp,
+        ${utcDateOnly(monthSeriesEnd)}::date::timestamp,
         interval '1 month'
       ) AS "month"
     )
     SELECT
-      m."month",
+      to_char(m."month", 'YYYY-MM') AS "month",
       COALESCE(i."income", 0)::text AS "income",
       COALESCE(e."expense", 0)::text AS "expense"
     FROM "months" m
@@ -163,41 +200,49 @@ export const getAnalyticsTrends = async (
     ORDER BY m."month" ASC
   `);
 
-  const thirtyDaysAgo = new Date(now);
-  thirtyDaysAgo.setUTCDate(thirtyDaysAgo.getUTCDate() - 29);
-  thirtyDaysAgo.setUTCHours(0, 0, 0, 0);
-
   const dailyRows = await prisma.$queryRaw<DailyTrendRow[]>(Prisma.sql`
-    WITH "expense_daily" AS (
+    WITH "income_daily" AS (
+      SELECT "date", sum("amount")::numeric AS "income"
+      FROM "Income"
+      WHERE "userId" = ${userId}::uuid
+        AND "date" >= ${dailyStartDate}::date
+        AND "date" < ${dailyEndDate}::date
+      GROUP BY "date"
+    ),
+    "expense_daily" AS (
       SELECT "date", sum("amount")::numeric AS "expense"
       FROM "Expense"
       WHERE "userId" = ${userId}::uuid
-        AND "date" >= ${thirtyDaysAgo}
-        AND "date" <= ${now}
+        AND "date" >= ${dailyStartDate}::date
+        AND "date" < ${dailyEndDate}::date
       GROUP BY "date"
-    )
-    SELECT d."date", COALESCE(e."expense", 0)::text AS "expense"
-    FROM (
+    ),
+    "days" AS (
       SELECT generate_series(
-        ${thirtyDaysAgo},
-        date_trunc('day', ${now}),
+        ${dailyStartDate}::date::timestamp,
+        (${dailyEndDate}::date - 1)::timestamp,
         interval '1 day'
       )::date AS "date"
-    ) d
+    )
+    SELECT
+      to_char(d."date", 'YYYY-MM-DD') AS "date",
+      COALESCE(i."income", 0)::text AS "income",
+      COALESCE(e."expense", 0)::text AS "expense"
+    FROM "days" d
+    LEFT JOIN "income_daily" i ON i."date" = d."date"
     LEFT JOIN "expense_daily" e ON e."date" = d."date"
     ORDER BY d."date" ASC
   `);
 
   return {
     monthly: monthlyRows.map((row) => ({
-      month: row.month.toISOString().slice(0, 7),
+      month: row.month,
       income: Number(row.income),
       expense: Number(row.expense),
     })),
     daily: dailyRows.map((row) => ({
-      date: row.date instanceof Date
-        ? row.date.toISOString().slice(0, 10)
-        : String(row.date).slice(0, 10),
+      date: row.date,
+      income: Number(row.income),
       expense: Number(row.expense),
     })),
   };

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Bell, X, CheckCircle2, AlertTriangle, LogOut, Settings, Info } from 'lucide-react';
+import { Search, Bell, X, CheckCircle2, AlertTriangle, LogOut, Settings, Info, Trophy } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useNotifications } from '../../context/NotificationContext';
 import { useToast } from '../common/Toast';
@@ -13,6 +13,14 @@ interface TopbarProps {
     avatarUrl?: string;
   };
 }
+
+const budgetNotificationStyles: Record<string, { title: string; background: string; color: string }> = {
+  BUDGET_50: { title: 'Budget spending warning', background: 'bg-sky-100', color: 'text-sky-600' },
+  BUDGET_80: { title: 'High budget spending', background: 'bg-amber-100', color: 'text-amber-600' },
+  BUDGET_100: { title: 'Budget limit reached', background: 'bg-rose-100', color: 'text-rose-600' },
+  BUDGET_ALERT: { title: 'Budget alert', background: 'bg-amber-100', color: 'text-amber-600' },
+  GOAL_COMPLETED: { title: 'Savings goal completed', background: 'bg-amber-100', color: 'text-amber-600' },
+};
 
 export const Topbar: React.FC<TopbarProps> = ({
   onSearch,
@@ -126,56 +134,72 @@ export const Topbar: React.FC<TopbarProps> = ({
                 )}
               </div>
               <div className="divide-y divide-gray-50 mt-2 max-h-64 overflow-y-auto">
-                {notifications.map((n) => (
-                  <div
-                    key={n.id}
-                    className={`py-2.5 flex items-start gap-3 hover:bg-navy-light/50 rounded-2xl p-2 transition-colors ${
-                      n.isRead ? 'opacity-70' : ''
-                    }`}
-                  >
-                    {n.type === 'BUDGET_80' ? (
-                      <div className="w-8 h-8 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center flex-shrink-0 mt-0.5">
-                        <AlertTriangle className="w-4 h-4" />
+                {notifications.map((n) => {
+                  const budgetStyle = budgetNotificationStyles[n.type];
+                  return (
+                    <div
+                      key={n.id}
+                      className={`py-2.5 flex items-start gap-3 hover:bg-navy-light/50 rounded-2xl p-2 transition-colors ${
+                        n.isRead ? 'opacity-70' : ''
+                      }`}
+                    >
+                      {budgetStyle && n.type !== 'GOAL_COMPLETED' ? (
+                        <div className={`w-8 h-8 rounded-full ${budgetStyle.background} ${budgetStyle.color} flex items-center justify-center flex-shrink-0 mt-0.5`}>
+                          <AlertTriangle className="w-4 h-4" />
+                        </div>
+                      ) : n.type === 'GOAL_COMPLETED' ? (
+                        <div className="w-8 h-8 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center flex-shrink-0 mt-0.5">
+                          <Trophy className="w-4 h-4" />
+                        </div>
+                      ) : n.type === 'OCR_PROCESSED' ? (
+                        <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center flex-shrink-0 mt-0.5">
+                          <CheckCircle2 className="w-4 h-4" />
+                        </div>
+                      ) : (
+                        <div className="w-8 h-8 rounded-full bg-primary-light text-primary flex items-center justify-center flex-shrink-0 mt-0.5">
+                          {n.type === 'GOAL_COMPLETED' ? (
+                            <Trophy className="w-4 h-4" />
+                          ) : n.type === 'SAVINGS_UPDATE' ? (
+                            <CheckCircle2 className="w-4 h-4" />
+                          ) : (
+                            <Info className="w-4 h-4" />
+                          )}
+                        </div>
+                      )}
+                      <div className="flex-1">
+                        <p className="text-xs font-semibold text-navy">
+                          {budgetStyle?.title ??
+                            (n.type === 'OCR_PROCESSED'
+                              ? 'Receipt Processed'
+                              : n.type === 'SAVINGS_UPDATE'
+                                ? 'Savings Update'
+                                : n.type === 'GOAL_COMPLETED'
+                                  ? 'Savings Goal Completed'
+                                  : 'Account Update')}
+                        </p>
+                        <p className="text-xs text-navy-muted line-clamp-2 mt-0.5">{n.message}</p>
+                        <time className="text-[10px] text-navy-muted/70 mt-1 block" dateTime={n.createdAt}>
+                          {new Date(n.createdAt).toLocaleString(undefined, {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: 'numeric',
+                            minute: '2-digit',
+                          })}
+                        </time>
                       </div>
-                    ) : n.type === 'OCR_PROCESSED' ? (
-                      <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center flex-shrink-0 mt-0.5">
-                        <CheckCircle2 className="w-4 h-4" />
-                      </div>
-                    ) : (
-                      <div className="w-8 h-8 rounded-full bg-primary-light text-primary flex items-center justify-center flex-shrink-0 mt-0.5">
-                        <Info className="w-4 h-4" />
-                      </div>
-                    )}
-                    <div className="flex-1">
-                      <p className="text-xs font-semibold text-navy">
-                        {n.type === 'BUDGET_80'
-                          ? 'Budget Alert'
-                          : n.type === 'OCR_PROCESSED'
-                            ? 'Receipt Processed'
-                            : 'Account Update'}
-                      </p>
-                      <p className="text-xs text-navy-muted line-clamp-2 mt-0.5">{n.message}</p>
-                      <time className="text-[10px] text-navy-muted/70 mt-1 block" dateTime={n.createdAt}>
-                        {new Date(n.createdAt).toLocaleString(undefined, {
-                          month: 'short',
-                          day: 'numeric',
-                          hour: 'numeric',
-                          minute: '2-digit',
-                        })}
-                      </time>
+                      {!n.isRead && (
+                        <button
+                          type="button"
+                          onClick={() => markAsRead(n.id)}
+                          aria-label="Mark notification as read"
+                          className="rounded-full p-1 text-navy-muted hover:bg-emerald-50 hover:text-emerald-600"
+                        >
+                          <CheckCircle2 className="h-4 w-4" />
+                        </button>
+                      )}
                     </div>
-                    {!n.isRead && (
-                      <button
-                        type="button"
-                        onClick={() => markAsRead(n.id)}
-                        aria-label="Mark notification as read"
-                        className="rounded-full p-1 text-navy-muted hover:bg-emerald-50 hover:text-emerald-600"
-                      >
-                        <CheckCircle2 className="h-4 w-4" />
-                      </button>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
               <button
                 type="button"

@@ -3,12 +3,16 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import express from 'express';
 import http from 'node:http';
+import jwt from 'jsonwebtoken';
+import { assertSafeTestDatabase } from '../test-utils/testDatabaseGuard.js';
 import app from '../app.js';
 import prisma from '../config/database.js';
 import { env } from '../config/env.js';
 import { authenticate, requireRole } from '../middleware/auth.middleware.js';
 import { errorHandler } from '../middleware/errorHandler.js';
 import { hashToken } from '../utils/authTokens.js';
+
+assertSafeTestDatabase();
 
 test('registration, email verification, login, refresh, reset, and authorization', async () => {
   await prisma.$connect();
@@ -110,6 +114,26 @@ test('registration, email verification, login, refresh, reset, and authorization
     });
     assert.equal(profile.status, 200);
 
+    const invalidTokenProfile = await fetch(`${baseUrl}/me`, {
+      headers: { Authorization: 'Bearer invalid-token' },
+    });
+    assert.equal(invalidTokenProfile.status, 401);
+
+    const expiredAccessToken = jwt.sign(
+      {
+        userId: session.user.id,
+        email,
+        role: 'USER',
+        tokenType: 'access',
+      },
+      env.JWT_SECRET,
+      { expiresIn: '-1s' },
+    );
+    const expiredTokenProfile = await fetch(`${baseUrl}/me`, {
+      headers: { Authorization: `Bearer ${expiredAccessToken}` },
+    });
+    assert.equal(expiredTokenProfile.status, 401);
+
     const roleApp = express();
     roleApp.get('/admin', authenticate, requireRole('ADMIN'), (_req, res) => res.sendStatus(204));
     roleApp.use(errorHandler);
@@ -130,6 +154,7 @@ test('registration, email verification, login, refresh, reset, and authorization
     assert.equal(refresh.status, 200);
     const rotatedCookie = refresh.headers.get('set-cookie')?.split(';')[0];
     assert.ok(rotatedCookie);
+    assert.notEqual(rotatedCookie, initialCookie);
 
     const replayRefresh = await fetch(`${baseUrl}/refresh`, {
       method: 'POST',

@@ -1,7 +1,8 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState, ReactNode } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, ReactNode } from 'react';
 import { NotificationItem } from '../types';
 import { getAccessToken } from '../services/api';
 import { budgetsApi } from '../services/apiService';
+import { useAuth } from './AuthContext';
 
 interface NotificationContextValue {
   notifications: NotificationItem[];
@@ -16,15 +17,34 @@ interface NotificationContextValue {
 const NotificationContext = createContext<NotificationContextValue | undefined>(undefined);
 
 export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const { user, isLoading: isAuthLoading } = useAuth();
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [isLoading, setIsLoading] = useState(Boolean(getAccessToken()));
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const notificationOwnerId = useRef<string | null>(null);
+  const userId = user?.id;
 
   useEffect(() => {
-    if (!getAccessToken()) {
+    if (isAuthLoading) {
+      notificationOwnerId.current = null;
+      setNotifications([]);
+      setError(null);
+      setIsLoading(Boolean(getAccessToken()));
+      return;
+    }
+
+    if (!userId || !getAccessToken()) {
+      notificationOwnerId.current = null;
+      setNotifications([]);
+      setError(null);
       setIsLoading(false);
       return;
+    }
+
+    if (notificationOwnerId.current !== userId) {
+      setNotifications([]);
+      notificationOwnerId.current = userId;
     }
 
     let active = true;
@@ -44,7 +64,7 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
     return () => {
       active = false;
     };
-  }, [reloadKey]);
+  }, [isAuthLoading, reloadKey, userId]);
 
   const markAsRead = useCallback(async (id: string) => {
     try {
